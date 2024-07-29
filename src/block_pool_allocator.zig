@@ -143,7 +143,7 @@ test "basic functionality" {
     const p2 = try alloc.create(u32);
     const p3 = try alloc.create(u32);
 
-    // Assert uniqueness
+    // uniqueness
     try std.testing.expect(p1 != p2);
     try std.testing.expect(p1 != p3);
     try std.testing.expect(p2 != p3);
@@ -151,13 +151,14 @@ test "basic functionality" {
     alloc.destroy(p2);
     const p4 = try alloc.create(u32);
 
-    // Assert memory reuse
+    // memory reuse
     try std.testing.expect(p2 == p4);
 
     alloc.destroy(p1);
     alloc.destroy(p3);
     alloc.destroy(p4);
 
+    // protection against impossible allocations
     try std.testing.expectError(error.OutOfMemory, alloc.create([std.mem.page_size + 1]u8));
     try std.testing.expectError(
         error.OutOfMemory,
