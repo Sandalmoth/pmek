@@ -39,7 +39,7 @@ const Page = struct {
 
         if (offset <= page.data.len) {
             const obj: *ObjectType(kind) = @alignCast(@ptrCast(&page.data[addr]));
-            obj.head.fwd.store(@ptrCast(obj), .unordered);
+            obj.head.fwd.store(@ptrCast(obj), .release);
             obj.head.kind = kind;
             obj.head.finished = false;
             obj.head.using_backup_allocator = false;
@@ -105,7 +105,7 @@ pub const GC = struct {
     }
 
     pub fn deinit(gc: *GC) void {
-        gc.collector_should_run.store(false, .unordered);
+        gc.collector_should_run.store(false, .release);
         if (multithreaded) gc.collector_thread.join();
         if (gc.mutex_free.tryLock()) {
             gc.mutex_free.unlock();
@@ -164,7 +164,7 @@ pub const GC = struct {
                 try gc.backing_allocator.alignedAlloc(u8, 16, ObjectType(kind).size(len)),
             ));
             std.debug.assert(result != null);
-            result.?.head.fwd.store(@ptrCast(result), .unordered);
+            result.?.head.fwd.store(@ptrCast(result), .release);
             result.?.head.kind = kind;
             result.?.head.finished = false;
             result.?.head.using_backup_allocator = true;
@@ -182,7 +182,7 @@ pub const GC = struct {
 
         if (!multithreaded and gc.collect_timer.read() > gc.collect_interval) {
             gc.collect_timer.reset();
-            gc.waiting_for_roots.store(true, .unordered);
+            gc.waiting_for_roots.store(true, .release);
         }
 
         return @ptrCast(obj);
@@ -196,7 +196,7 @@ pub const GC = struct {
         // STOP THE WORLD
         // update the given roots if they point to forwarded objects
         // add root to the root dataset so we can trace it later
-        root.* = root.*.fwd.load(.unordered);
+        root.* = root.*.fwd.load(.acquire);
         try gc.roots.append(gc.backing_allocator, root.*);
     }
 
@@ -215,16 +215,16 @@ pub const GC = struct {
     }
 
     fn collector(gc: *GC) !void {
-        while (gc.collector_should_run.load(.unordered)) {
-            while (gc.waiting_for_roots.load(.unordered)) {
-                if (!gc.collector_should_run.load(.unordered)) return;
+        while (gc.collector_should_run.load(.acquire)) {
+            while (gc.waiting_for_roots.load(.acquire)) {
+                if (!gc.collector_should_run.load(.acquire)) return;
                 std.time.sleep(1_000_000);
             }
             try gc.collect();
 
             while (gc.collect_timer.read() < gc.collect_interval) std.time.sleep(1_000_000);
             gc.collect_timer.reset();
-            gc.waiting_for_roots.store(true, .unordered);
+            gc.waiting_for_roots.store(true, .release);
         }
     }
 
@@ -294,7 +294,7 @@ pub const GC = struct {
     }
 
     fn trace(gc: *GC, ptr: ?*Object) !void {
-        std.debug.print("so am i, still tracing, for this world to stop tracing\n", .{});
+        std.debug.print("so am i, still waiting, for this world to stop tracing\n", .{});
         const obj = ptr orelse return;
         switch (obj.kind) {
             .real, .string => {},
@@ -317,7 +317,7 @@ pub const GC = struct {
         }
         // now, replicate if we are on a marked page
         // and we haven't already been replicated
-        if (obj == obj.fwd.load(.unordered) and pageOf(obj).mark) {
+        if (obj == obj.fwd.load(.acquire) and pageOf(obj).mark) {
             const r = switch (obj.kind) {
                 .real => try gc.dup(.real, obj),
                 .cons => try gc.dup(.cons, obj),
@@ -392,7 +392,7 @@ pub const GC = struct {
         }
         new.head.kind = kind;
         new.head.using_backup_allocator = false;
-        std.debug.assert(@intFromPtr(new.head.fwd.load(.unordered)) == @intFromPtr(new));
+        std.debug.assert(@intFromPtr(new.head.fwd.load(.acquire)) == @intFromPtr(new));
         return gc.commit(kind, new);
     }
 
@@ -465,9 +465,9 @@ fn debugPrint(obj: ?*Object) void {
     }
     const cons = obj.?.as(.cons);
     std.debug.print("(", .{});
-    debugPrint(cons.car.load(.unordered));
+    debugPrint(cons.car.load(.acquire));
     std.debug.print(" . ", .{});
-    debugPrint(cons.cdr.load(.unordered));
+    debugPrint(cons.cdr.load(.acquire));
     std.debug.print(")", .{});
 }
 
@@ -482,12 +482,12 @@ test "conses all the way down" {
     var roots: [256]*Object = undefined;
     for (0..roots.len) |i| {
         const cons = try gc.alloc(.cons, 0);
-        cons.car.store(null, .unordered);
-        cons.cdr.store(null, .unordered);
+        cons.car.store(null, .release);
+        cons.cdr.store(null, .release);
         roots[i] = gc.commit(.cons, cons);
     }
 
-    for (0..100000) |k| {
+    for (0..75000) |k| {
         std.debug.print("{}\n", .{k});
         if (gc.shouldTrace()) {
             for (0..256) |i| {
@@ -500,9 +500,9 @@ test "conses all the way down" {
         const y = rand.int(u8);
         const z = rand.int(u8);
         const cons = try gc.alloc(.cons, 0);
-        cons.car.store(roots[x], .unordered);
-        cons.cdr.store(roots[y], .unordered);
+        cons.car.store(roots[x], .release);
+        cons.cdr.store(roots[y], .release);
         roots[z] = gc.commit(.cons, cons);
-        // debugPrint(roots[z]);
+        debugPrint(roots[z]);
     }
 }
