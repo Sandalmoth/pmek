@@ -10,6 +10,7 @@ const Page = struct {
     next: ?*Page,
     offset: usize,
     mark: bool, // should this page be evacuated?
+    discarded: bool, // mark pages that will be destroyed soon (debug help)
     data: [std.mem.page_size - 32]u8 align(std.mem.page_size),
 
     fn init() Page {
@@ -17,6 +18,7 @@ const Page = struct {
             .offset = 0,
             .next = null,
             .mark = false,
+            .discarded = false,
             .data = undefined,
         };
     }
@@ -207,6 +209,15 @@ pub const GC = struct {
         // move from-space to discard-space
         // move eden-space to from-space
         gc.discard = gc.from;
+
+        if (builtin.mode != .ReleaseFast) {
+            var walk = gc.discard;
+            while (walk) |p| {
+                p.discarded = true;
+                walk = p.next;
+            }
+        }
+
         gc.from = gc.eden;
         gc.eden = null;
 
@@ -216,15 +227,15 @@ pub const GC = struct {
 
     fn collector(gc: *GC) !void {
         while (gc.collector_should_run.load(.acquire)) {
+            while (gc.collect_timer.read() < gc.collect_interval) std.time.sleep(1_000_000);
+            gc.collect_timer.reset();
+            gc.waiting_for_roots.store(true, .release);
+
             while (gc.waiting_for_roots.load(.acquire)) {
                 if (!gc.collector_should_run.load(.acquire)) return;
                 std.time.sleep(1_000_000);
             }
             try gc.collect();
-
-            while (gc.collect_timer.read() < gc.collect_interval) std.time.sleep(1_000_000);
-            gc.collect_timer.reset();
-            gc.waiting_for_roots.store(true, .release);
         }
     }
 
@@ -265,7 +276,8 @@ pub const GC = struct {
         }
 
         gc.n_compact_allocs = 0;
-        for (gc.roots.items) |root| try gc.trace(root);
+        for (gc.roots.items) |root| try gc.traceForward(root);
+        for (gc.roots.items) |root| try gc.traceMove(root);
         gc.roots.clearRetainingCapacity();
         walk = gc.discard;
         while (walk) |p| {
@@ -293,8 +305,8 @@ pub const GC = struct {
         return @ptrFromInt(@intFromPtr(obj) & mask);
     }
 
-    fn trace(gc: *GC, ptr: ?*Object) !void {
-        std.debug.print("so am i, still waiting, for this world to stop tracing\n", .{});
+    fn traceForward(gc: *GC, ptr: ?*Object) !void {
+        std.debug.print("so am i, still waiting, for this world to stop tracing (forward)\n", .{});
         const obj = ptr orelse return;
         switch (obj.kind) {
             .real, .string => {},
@@ -315,6 +327,31 @@ pub const GC = struct {
                 }
             },
         }
+
+        // keep tracing
+        switch (obj.kind) {
+            .real, .string => {},
+            .cons => {
+                const cons = obj.as(.cons);
+                // note, trace cdr first s.t. linked lists are sequential
+                try gc.traceForward(cons.cdr.load(.acquire));
+                try gc.traceForward(cons.car.load(.acquire));
+            },
+            .map => {
+                const map = obj.as(.map);
+                // i think this tracing-order is marginally better
+                // but would need careful benchmarking, it's not a huge difference
+                for (0..map.nodelen) |i| try gc.traceForward(map.nodes()[i].load(.acquire));
+                for (0..map.datalen) |i| try gc.traceForward(map.data()[2 * i].load(.acquire));
+                for (0..map.datalen) |i| try gc.traceForward(map.data()[2 * i + 1].load(.acquire));
+            },
+        }
+    }
+
+    fn traceMove(gc: *GC, ptr: ?*Object) !void {
+        if (ptr) |p| std.debug.assert(!pageOf(p).discarded);
+        std.debug.print("so am i, still waiting, for this world to stop tracing (move)\n", .{});
+        const obj = ptr orelse return;
         // now, replicate if we are on a marked page
         // and we haven't already been replicated
         if (obj == obj.fwd.load(.acquire) and pageOf(obj).mark) {
@@ -327,22 +364,22 @@ pub const GC = struct {
             obj.fwd.store(r, .release);
         }
 
-        // finally, keep tracing
+        // keep tracing
         switch (obj.kind) {
             .real, .string => {},
             .cons => {
                 const cons = obj.as(.cons);
                 // note, trace cdr first s.t. linked lists are sequential
-                try gc.trace(cons.cdr.load(.acquire));
-                try gc.trace(cons.car.load(.acquire));
+                try gc.traceMove(cons.cdr.load(.acquire));
+                try gc.traceMove(cons.car.load(.acquire));
             },
             .map => {
                 const map = obj.as(.map);
                 // i think this tracing-order is marginally better
                 // but would need careful benchmarking, it's not a huge difference
-                for (0..map.nodelen) |i| try gc.trace(map.nodes()[i].load(.acquire));
-                for (0..map.datalen) |i| try gc.trace(map.data()[2 * i].load(.acquire));
-                for (0..map.datalen) |i| try gc.trace(map.data()[2 * i + 1].load(.acquire));
+                for (0..map.nodelen) |i| try gc.traceMove(map.nodes()[i].load(.acquire));
+                for (0..map.datalen) |i| try gc.traceMove(map.data()[2 * i].load(.acquire));
+                for (0..map.datalen) |i| try gc.traceMove(map.data()[2 * i + 1].load(.acquire));
             },
         }
     }
@@ -364,6 +401,7 @@ pub const GC = struct {
     }
 
     fn dup(gc: *GC, comptime kind: Kind, _old: *Object) !*Object {
+        std.debug.print("called dup on a {}\n", .{kind});
         std.debug.assert(_old.finished); // disallow functions on unfinished allocations
         if (_old.using_backup_allocator) return _old;
         const old = _old.as(kind);
@@ -452,8 +490,29 @@ test "basic functionality" {
     _a.data = 1.0;
     var a = gc.commit(.real, _a);
 
+    std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+
+    while (!gc.shouldTrace()) std.time.sleep(1_000_000);
     try gc.traceRoot(&a);
     try gc.releaseEden();
+
+    std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+
+    std.time.sleep(500_000_000);
+
+    const _b = try gc.alloc(.cons, 0);
+    _b.car.store(a, .release);
+    _b.cdr.store(null, .release);
+    var b = gc.commit(.cons, _b);
+
+    std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+    std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
+
+    while (!gc.shouldTrace()) std.time.sleep(1_000_000);
+    try gc.traceRoot(&b);
+    try gc.releaseEden();
+
+    std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
 
     std.time.sleep(500_000_000);
 }
@@ -487,7 +546,7 @@ test "conses all the way down" {
         roots[i] = gc.commit(.cons, cons);
     }
 
-    for (0..75000) |k| {
+    for (0..200000) |k| {
         std.debug.print("{}\n", .{k});
         if (gc.shouldTrace()) {
             for (0..256) |i| {
@@ -503,6 +562,6 @@ test "conses all the way down" {
         cons.car.store(roots[x], .release);
         cons.cdr.store(roots[y], .release);
         roots[z] = gc.commit(.cons, cons);
-        debugPrint(roots[z]);
+        // debugPrint(roots[z]);
     }
 }
