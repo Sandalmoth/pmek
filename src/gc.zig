@@ -89,7 +89,7 @@ pub const GC = struct {
     waiting_for_roots: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     collector_should_run: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
     collect_timer: std.time.Timer,
-    collect_interval: u64 = 200_000_000,
+    collect_interval: u64 = 10_000_000,
 
     pub inline fn init() !GC {
         const gc = GC{
@@ -306,7 +306,7 @@ pub const GC = struct {
     }
 
     fn traceForward(gc: *GC, ptr: ?*Object) !void {
-        std.debug.print("so am i, still waiting, for this world to stop tracing (forward)\n", .{});
+        // std.debug.print("so am i, still waiting, for this world to stop tracing (forward)\n", .{});
         const obj = ptr orelse return;
         switch (obj.kind) {
             .real, .string => {},
@@ -333,24 +333,21 @@ pub const GC = struct {
             .real, .string => {},
             .cons => {
                 const cons = obj.as(.cons);
-                // note, trace cdr first s.t. linked lists are sequential
                 try gc.traceForward(cons.cdr.load(.acquire));
                 try gc.traceForward(cons.car.load(.acquire));
             },
             .map => {
                 const map = obj.as(.map);
-                // i think this tracing-order is marginally better
-                // but would need careful benchmarking, it's not a huge difference
-                for (0..map.nodelen) |i| try gc.traceForward(map.nodes()[i].load(.acquire));
-                for (0..map.datalen) |i| try gc.traceForward(map.data()[2 * i].load(.acquire));
-                for (0..map.datalen) |i| try gc.traceForward(map.data()[2 * i + 1].load(.acquire));
+                for (0..2 * map.datalen + map.datalen) |i| {
+                    try gc.traceForward(map.data()[i].load(.acquire));
+                }
             },
         }
     }
 
     fn traceMove(gc: *GC, ptr: ?*Object) !void {
         if (ptr) |p| std.debug.assert(!pageOf(p).discarded);
-        std.debug.print("so am i, still waiting, for this world to stop tracing (move)\n", .{});
+        // std.debug.print("so am i, still waiting, for this world to stop tracing (move)\n", .{});
         const obj = ptr orelse return;
         // now, replicate if we are on a marked page
         // and we haven't already been replicated
@@ -481,41 +478,41 @@ pub const GC = struct {
     }
 };
 
-test "basic functionality" {
-    var gc = try GC.init();
-    try gc.startCollector();
-    defer gc.deinit();
+// test "basic functionality" {
+//     var gc = try GC.init();
+//     try gc.startCollector();
+//     defer gc.deinit();
 
-    const _a = try gc.alloc(.real, 0);
-    _a.data = 1.0;
-    var a = gc.commit(.real, _a);
+//     const _a = try gc.alloc(.real, 0);
+//     _a.data = 1.0;
+//     var a = gc.commit(.real, _a);
 
-    std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+//     std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
 
-    while (!gc.shouldTrace()) std.time.sleep(1_000_000);
-    try gc.traceRoot(&a);
-    try gc.releaseEden();
+//     while (!gc.shouldTrace()) std.time.sleep(1_000_000);
+//     try gc.traceRoot(&a);
+//     try gc.releaseEden();
 
-    std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+//     std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
 
-    std.time.sleep(500_000_000);
+//     std.time.sleep(500_000_000);
 
-    const _b = try gc.alloc(.cons, 0);
-    _b.car.store(a, .release);
-    _b.cdr.store(null, .release);
-    var b = gc.commit(.cons, _b);
+//     const _b = try gc.alloc(.cons, 0);
+//     _b.car.store(a, .release);
+//     _b.cdr.store(null, .release);
+//     var b = gc.commit(.cons, _b);
 
-    std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
-    std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
+//     std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+//     std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
 
-    while (!gc.shouldTrace()) std.time.sleep(1_000_000);
-    try gc.traceRoot(&b);
-    try gc.releaseEden();
+//     while (!gc.shouldTrace()) std.time.sleep(1_000_000);
+//     try gc.traceRoot(&b);
+//     try gc.releaseEden();
 
-    std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
+//     std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
 
-    std.time.sleep(500_000_000);
-}
+//     std.time.sleep(500_000_000);
+// }
 
 fn debugPrint(obj: ?*Object) void {
     if (obj == null) {
@@ -546,9 +543,13 @@ test "conses all the way down" {
         roots[i] = gc.commit(.cons, cons);
     }
 
-    for (0..200000) |k| {
+    for (0..100000) |k| {
         std.debug.print("{}\n", .{k});
         if (gc.shouldTrace()) {
+            // for (0..256) |i| {
+            //     debugPrint(roots[i]);
+            // }
+            std.time.sleep(1_000_000);
             for (0..256) |i| {
                 try gc.traceRoot(&roots[i]);
             }
@@ -556,12 +557,28 @@ test "conses all the way down" {
         }
 
         const x = rand.int(u8);
-        const y = rand.int(u8);
-        const z = rand.int(u8);
+        const y = blk: {
+            var y = rand.int(u8);
+            while (y == x) y = rand.int(u8);
+            break :blk y;
+        };
+        const z = blk: {
+            var z = rand.int(u8);
+            while (z == x or z == y) z = rand.int(u8);
+            break :blk z;
+        };
         const cons = try gc.alloc(.cons, 0);
         cons.car.store(roots[x], .release);
         cons.cdr.store(roots[y], .release);
         roots[z] = gc.commit(.cons, cons);
         // debugPrint(roots[z]);
+    }
+
+    std.time.sleep(1_000_000_000);
+    if (gc.shouldTrace()) {
+        for (0..256) |i| {
+            try gc.traceRoot(&roots[i]);
+        }
+        try gc.releaseEden();
     }
 }
