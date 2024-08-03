@@ -241,8 +241,6 @@ pub const GC = struct {
     }
 
     fn collect(gc: *GC) !void {
-        std.debug.print("######## start collect {}\n", .{multithreaded});
-
         // CONCURRENT
         // move some of survivor-space to from-space (dynamic probability?)
         // mark all pages in from-space
@@ -296,10 +294,6 @@ pub const GC = struct {
         const ratio = @as(f64, @floatFromInt(gc.n_compact_allocs)) /
             @as(f64, @floatFromInt(n_from));
         gc.p_compact = 1.0 - ratio;
-
-        std.debug.print("p_next = {}\n", .{gc.p_compact});
-
-        std.debug.print("end collect ########## {}\n", .{multithreaded});
     }
 
     fn pageOf(obj: *Object) *Page {
@@ -309,7 +303,6 @@ pub const GC = struct {
     }
 
     fn traceForward(gc: *GC, ptr: ?*Object) !void {
-        // std.debug.print("so am i, still waiting, for this world to stop tracing (forward)\n", .{});
         const obj = ptr orelse return;
         switch (obj.kind) {
             .real, .string => {},
@@ -350,7 +343,6 @@ pub const GC = struct {
 
     fn traceMove(gc: *GC, ptr: ?*Object) !void {
         if (ptr) |p| std.debug.assert(!pageOf(p).discarded);
-        // std.debug.print("so am i, still waiting, for this world to stop tracing (move)\n", .{});
         const obj = ptr orelse return;
         // now, replicate if we are on a marked page
         // and we haven't already been replicated
@@ -402,7 +394,6 @@ pub const GC = struct {
     }
 
     fn dup(gc: *GC, comptime kind: Kind, _old: *Object) !*Object {
-        std.debug.print("called dup on a {}\n", .{kind});
         std.debug.assert(_old.finished); // disallow functions on unfinished allocations
         if (_old.using_backup_allocator) return _old;
         const old = _old.as(kind);
@@ -482,55 +473,6 @@ pub const GC = struct {
     }
 };
 
-// test "basic functionality" {
-//     var gc = try GC.init();
-//     try gc.startCollector();
-//     defer gc.deinit();
-
-//     const _a = try gc.alloc(.real, 0);
-//     _a.data = 1.0;
-//     var a = gc.commit(.real, _a);
-
-//     std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
-
-//     while (!gc.shouldTrace()) std.time.sleep(1_000_000);
-//     try gc.traceRoot(&a);
-//     try gc.releaseEden();
-
-//     std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
-
-//     std.time.sleep(500_000_000);
-
-//     const _b = try gc.alloc(.cons, 0);
-//     _b.car.store(a, .release);
-//     _b.cdr.store(null, .release);
-//     var b = gc.commit(.cons, _b);
-
-//     std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
-//     std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
-
-//     while (!gc.shouldTrace()) std.time.sleep(1_000_000);
-//     try gc.traceRoot(&b);
-//     try gc.releaseEden();
-
-//     std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
-
-//     std.time.sleep(500_000_000);
-// }
-
-fn debugPrint(obj: ?*Object) void {
-    if (obj == null) {
-        std.debug.print("nil", .{});
-        return;
-    }
-    const cons = obj.?.as(.cons);
-    std.debug.print("(", .{});
-    debugPrint(cons.car.load(.acquire));
-    std.debug.print(" . ", .{});
-    debugPrint(cons.cdr.load(.acquire));
-    std.debug.print(")", .{});
-}
-
 test "conses all the way down" {
     var gc = try GC.init();
     try gc.startCollector();
@@ -547,10 +489,8 @@ test "conses all the way down" {
         roots[i] = gc.commit(.cons, cons);
     }
 
-    for (0..4000) |k| {
-        std.debug.print("{}\n", .{k});
+    for (0..4000) |_| {
         if (gc.shouldTrace()) {
-            std.debug.print("#########################################\n", .{});
             for (0..256) |i| {
                 try gc.traceRoot(&roots[i]);
             }
@@ -587,7 +527,6 @@ test "conses all the way down" {
 
     std.time.sleep(1_000_000_000);
     if (gc.shouldTrace()) {
-        std.debug.print("HOWDY\n", .{});
         for (0..256) |i| {
             try gc.traceRoot(&roots[i]);
         }
