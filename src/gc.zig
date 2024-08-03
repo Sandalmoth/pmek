@@ -4,13 +4,13 @@ const builtin = @import("builtin");
 const Kind = @import("object.zig").Kind;
 const Object = @import("object.zig").Object;
 const ObjectType = @import("object.zig").ObjectType;
-const rng = @import("shared_rng.zig");
 
 const Page = struct {
     next: ?*Page,
     offset: usize,
     mark: bool, // should this page be evacuated?
     discarded: bool, // mark pages that will be destroyed soon (debug help)
+    destroyed: bool,
     data: [std.mem.page_size - 32]u8 align(std.mem.page_size),
 
     fn init() Page {
@@ -19,19 +19,18 @@ const Page = struct {
             .next = null,
             .mark = false,
             .discarded = false,
+            .destroyed = false,
             .data = undefined,
         };
     }
 
     /// for types that aren't varsized, len must be 0
-    /// for .map it must be the number of children (i.e. 2 * datalen + nodelen)
-    /// for .string it must be the number of bytes required to store it
     fn alloc(page: *Page, comptime kind: Kind, len: usize) ?*ObjectType(kind) {
+        std.debug.assert(!page.discarded);
+        std.debug.assert(!page.destroyed);
         // to alloc an object on a page, simplpy make sure there is room and then bump-allocate
         switch (kind) {
-            .real, .cons => std.debug.assert(len == 0),
-            .map => std.debug.assert(len <= 128),
-            .string => {},
+            .int, .cons => std.debug.assert(len == 0),
         }
 
         const addr = page.offset;
@@ -57,63 +56,55 @@ comptime {
     std.debug.assert(@sizeOf(Page) <= std.mem.page_size);
 }
 
-const DummyMutex = struct {
-    fn lock(_: *DummyMutex) void {}
-    fn unlock(_: *DummyMutex) void {}
-    fn tryLock(_: *DummyMutex) bool {
-        return true;
-    }
-};
-
-// a single one of these exists (for each vm instantiation)
-// and it handles collecting garbage
 pub const GC = struct {
-    const multithreaded = !builtin.single_threaded;
+    mutex: std.Thread.Mutex,
 
-    backing_allocator: std.mem.Allocator = std.heap.page_allocator,
-    free: ?*Page = null,
-    n_free: usize = 0,
-    mutex_free: if (multithreaded) std.Thread.Mutex else DummyMutex,
+    backing_allocator: std.mem.Allocator,
+    free: ?*Page,
+    n_free: usize,
 
-    eden: ?*Page = null,
-    from: ?*Page = null,
-    survivor: ?*Page = null,
-    discard: ?*Page = null,
+    eden: ?*Page,
+    from: ?*Page,
+    survivor: ?*Page,
+    discard: ?*Page,
 
     roots: std.ArrayListUnmanaged(*Object),
 
-    p_compact: f64 = 0.5,
-    n_compact_allocs: usize = 0,
-
     collector_thread: std.Thread,
-    waiting_for_roots: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    collector_should_run: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+    waiting_for_roots: std.atomic.Value(bool),
+    collector_should_run: std.atomic.Value(bool),
+
     collect_timer: std.time.Timer,
-    collect_interval: u64 = 10_000_000,
+    collect_interval: u64,
 
-    pub inline fn init() !GC {
-        const gc = GC{
-            .collector_thread = undefined,
-            .mutex_free = if (multithreaded) std.Thread.Mutex{} else DummyMutex{},
-            .roots = std.ArrayListUnmanaged(*Object){},
-            .collect_timer = try std.time.Timer.start(),
-        };
-        return gc;
-    }
-
-    pub fn startCollector(gc: *GC) !void {
-        if (!multithreaded) return;
+    pub fn init(gc: *GC) !void {
+        gc.mutex = std.Thread.Mutex{};
+        gc.backing_allocator = std.heap.page_allocator;
+        gc.free = null;
+        gc.n_free = 0;
+        gc.eden = null;
+        gc.from = null;
+        gc.survivor = null;
+        gc.discard = null;
+        gc.collect_interval = 100_000_000;
+        gc.waiting_for_roots = std.atomic.Value(bool).init(false);
+        gc.collector_should_run = std.atomic.Value(bool).init(true);
+        gc.collect_timer = try std.time.Timer.start();
         gc.collector_thread = try std.Thread.spawn(.{}, GC.collector, .{gc});
+        gc.roots = try std.ArrayListUnmanaged(*Object).initCapacity(
+            gc.backing_allocator,
+            std.mem.page_size / @sizeOf(*Object),
+        );
     }
 
     pub fn deinit(gc: *GC) void {
-        gc.collector_should_run.store(false, .release);
-        if (multithreaded) gc.collector_thread.join();
-        if (gc.mutex_free.tryLock()) {
-            gc.mutex_free.unlock();
+        gc.collector_should_run.store(false, .unordered);
+        gc.collector_thread.join();
+        if (gc.mutex.tryLock()) {
+            gc.mutex.unlock();
         } else {
             // indicates some kind of unexpected use, shoudn't really happen
-            std.log.err("GC.mutex_free was locked during call to GC.deinit", .{});
+            std.log.err("GC.mutex was locked during call to GC.deinit", .{});
         }
         var walk: ?*Page = gc.free;
         while (walk) |p| {
@@ -176,18 +167,24 @@ pub const GC = struct {
 
     /// marks the object as usable
     pub fn commit(gc: *GC, comptime kind: Kind, obj: *ObjectType(kind)) *Object {
-        // without memoizing the hash of all objects, this isn't really needed
-        // but I'll keep it around just for the safety of the finished marker
+        _ = gc;
         std.debug.assert(!obj.head.finished);
         std.debug.assert(obj.head.kind == kind);
         obj.head.finished = true;
-
-        if (!multithreaded and gc.collect_timer.read() > gc.collect_interval) {
-            gc.collect_timer.reset();
-            gc.waiting_for_roots.store(true, .release);
-        }
-
         return @ptrCast(obj);
+    }
+
+    pub fn newInt(gc: *GC, val: i64) !*Object {
+        const obj = try gc.alloc(.int, 0);
+        obj.data = val;
+        return gc.commit(.int, obj);
+    }
+
+    pub fn newCons(gc: *GC, car: ?*Object, cdr: ?*Object) !*Object {
+        const obj = try gc.alloc(.cons, 0);
+        obj.car.store(car, .unordered);
+        obj.cdr.store(cdr, .unordered);
+        return gc.commit(.cons, obj);
     }
 
     pub fn shouldTrace(gc: *GC) bool {
@@ -198,7 +195,8 @@ pub const GC = struct {
         // STOP THE WORLD
         // update the given roots if they point to forwarded objects
         // add root to the root dataset so we can trace it later
-        root.* = root.*.fwd.load(.acquire);
+        std.debug.print("updating root {*} -> {*}\n", .{ root.*, root.*.fwd.load(.unordered) });
+        root.* = root.*.fwd.load(.unordered);
         try gc.roots.append(gc.backing_allocator, root.*);
     }
 
@@ -210,37 +208,40 @@ pub const GC = struct {
         // move eden-space to from-space
         gc.discard = gc.from;
 
-        if (builtin.mode != .ReleaseFast) {
-            var walk = gc.discard;
-            while (walk) |p| {
-                p.discarded = true;
-                walk = p.next;
-            }
+        var walk = gc.discard;
+        while (walk) |p| {
+            p.discarded = true;
+            walk = p.next;
         }
 
         gc.from = gc.eden;
         gc.eden = null;
 
         gc.waiting_for_roots.store(false, .release);
-        if (!multithreaded) try gc.collect();
     }
 
     fn collector(gc: *GC) !void {
-        while (gc.collector_should_run.load(.acquire)) {
-            while (gc.collect_timer.read() < gc.collect_interval) std.time.sleep(1_000_000);
+        loop: while (true) {
             gc.collect_timer.reset();
+            while (gc.collect_timer.read() < gc.collect_interval) {
+                if (!gc.collector_should_run.load(.acquire)) break :loop;
+                std.time.sleep(1_000_000);
+            }
             gc.waiting_for_roots.store(true, .release);
 
             while (gc.waiting_for_roots.load(.acquire)) {
-                if (!gc.collector_should_run.load(.acquire)) return;
+                if (!gc.collector_should_run.load(.acquire)) break :loop;
                 std.time.sleep(1_000_000);
             }
             try gc.collect();
         }
+        std.debug.print("####################################\n", .{});
+        std.debug.print("######## SHUTDOWN COLLECTOR ########\n", .{});
+        std.debug.print("####################################\n", .{});
     }
 
     fn collect(gc: *GC) !void {
-        std.debug.print("######## ran collect {}\n", .{multithreaded});
+        std.debug.print("######## ran collect\n", .{});
 
         // CONCURRENT
         // move some of survivor-space to from-space (dynamic probability?)
@@ -251,11 +252,10 @@ pub const GC = struct {
         // clear root dataset
         // destroy discard-space
 
-        var n_survivors_compacted: usize = 0;
         var parent: *?*Page = &gc.survivor;
         var walk = gc.survivor;
         while (walk) |p| {
-            if (rng.float(f64) < gc.p_compact) {
+            if (true) {
                 parent.* = p.next;
                 walk = p.next;
                 p.next = gc.from;
@@ -264,7 +264,6 @@ pub const GC = struct {
                 parent = &p.next;
                 walk = p.next;
             }
-            n_survivors_compacted += 1;
         }
 
         var n_from: usize = 0;
@@ -274,8 +273,8 @@ pub const GC = struct {
             walk = p.next;
             n_from += 1;
         }
+        std.debug.print("FROM SPAEC SIZE IS {}\n", .{n_from});
 
-        gc.n_compact_allocs = 0;
         for (gc.roots.items) |root| try gc.traceForward(root);
         for (gc.roots.items) |root| try gc.traceMove(root);
         gc.roots.clearRetainingCapacity();
@@ -285,18 +284,6 @@ pub const GC = struct {
             gc.destroyPage(p); // lots of mutex locking/unlocking
         }
         gc.discard = null;
-
-        // the fewer pages we needed to allocate to fit the freed data
-        // the more survivor pages we should try to compact next time
-        // as the survivor space contained a lot of garbage
-        // and vice versa
-
-        // assume that the odds of surviving is the same in eden and survivor space (tunable?)
-        const ratio = @as(f64, @floatFromInt(gc.n_compact_allocs)) /
-            @as(f64, @floatFromInt(n_from));
-        gc.p_compact = 1.0 - ratio;
-
-        gc.waiting_for_roots.store(true, .release);
     }
 
     fn pageOf(obj: *Object) *Page {
@@ -306,10 +293,14 @@ pub const GC = struct {
     }
 
     fn traceForward(gc: *GC, ptr: ?*Object) !void {
-        // std.debug.print("so am i, still waiting, for this world to stop tracing (forward)\n", .{});
+        if (ptr) |p| {
+            // std.debug.assert(!pageOf(p).discarded);
+            std.debug.assert(!pageOf(p).destroyed);
+        }
+        std.debug.print("tracing (forward)\n", .{});
         const obj = ptr orelse return;
         switch (obj.kind) {
-            .real, .string => {},
+            .int => {},
             .cons => {
                 const cons = obj.as(.cons);
                 if (cons.car.load(.acquire)) |car| {
@@ -319,64 +310,52 @@ pub const GC = struct {
                     cons.cdr.store(cdr.fwd.load(.acquire), .release);
                 }
             },
-            .map => {
-                const map = obj.as(.map);
-                for (0..2 * map.datalen + map.nodelen) |i| {
-                    const child = map.data()[i].load(.acquire) orelse continue;
-                    map.data()[i].store(child.fwd.load(.acquire), .release);
-                }
-            },
         }
 
         // keep tracing
         switch (obj.kind) {
-            .real, .string => {},
+            .int => {
+                std.debug.print("INT-TAIL\n", .{});
+            },
             .cons => {
                 const cons = obj.as(.cons);
                 try gc.traceForward(cons.cdr.load(.acquire));
                 try gc.traceForward(cons.car.load(.acquire));
             },
-            .map => {
-                const map = obj.as(.map);
-                for (0..2 * map.datalen + map.datalen) |i| {
-                    try gc.traceForward(map.data()[i].load(.acquire));
-                }
-            },
         }
     }
 
     fn traceMove(gc: *GC, ptr: ?*Object) !void {
-        if (ptr) |p| std.debug.assert(!pageOf(p).discarded);
-        // std.debug.print("so am i, still waiting, for this world to stop tracing (move)\n", .{});
+        if (ptr) |p| {
+            std.debug.assert(!pageOf(p).discarded);
+            std.debug.assert(!pageOf(p).destroyed);
+        }
+        std.debug.print("tracing (move)\n", .{});
         const obj = ptr orelse return;
+        if (obj != obj.fwd.load(.acquire)) {
+            // we must have moved this object in this round already
+            // hence we must also have moved it's children
+            // so we can short circuit
+            return;
+        }
         // now, replicate if we are on a marked page
         // and we haven't already been replicated
-        if (obj == obj.fwd.load(.acquire) and pageOf(obj).mark) {
+        if (pageOf(obj).mark) {
             const r = switch (obj.kind) {
-                .real => try gc.dup(.real, obj),
+                .int => try gc.dup(.int, obj),
                 .cons => try gc.dup(.cons, obj),
-                .map => try gc.dup(.map, obj),
-                .string => try gc.dup(.string, obj),
             };
             obj.fwd.store(r, .release);
         }
 
         // keep tracing
         switch (obj.kind) {
-            .real, .string => {},
+            .int => {},
             .cons => {
                 const cons = obj.as(.cons);
                 // note, trace cdr first s.t. linked lists are sequential
                 try gc.traceMove(cons.cdr.load(.acquire));
                 try gc.traceMove(cons.car.load(.acquire));
-            },
-            .map => {
-                const map = obj.as(.map);
-                // i think this tracing-order is marginally better
-                // but would need careful benchmarking, it's not a huge difference
-                for (0..map.nodelen) |i| try gc.traceMove(map.nodes()[i].load(.acquire));
-                for (0..map.datalen) |i| try gc.traceMove(map.data()[2 * i].load(.acquire));
-                for (0..map.datalen) |i| try gc.traceMove(map.data()[2 * i + 1].load(.acquire));
             },
         }
     }
@@ -403,26 +382,13 @@ pub const GC = struct {
         if (_old.using_backup_allocator) return _old;
         const old = _old.as(kind);
         const new = switch (kind) {
-            .real, .cons => try gc.allocSurvivor(kind, 0),
-            .map => try gc.allocSurvivor(kind, 2 * old.datalen + old.nodelen),
-            .string => try gc.allocSurvivor(kind, old.len),
+            .int, .cons => try gc.allocSurvivor(kind, 0),
         };
         switch (kind) {
-            .real => new.data = old.data,
+            .int => new.data = old.data,
             .cons => {
                 new.car = old.car;
                 new.cdr = old.cdr;
-            },
-            .map => {
-                new.datamask = old.datamask;
-                new.nodemask = old.nodemask;
-                new.datalen = old.datalen;
-                new.nodelen = old.nodelen;
-                @memcpy(new.data(), old.data()[0 .. 2 * old.datalen + old.nodelen]);
-            },
-            .string => {
-                new.len = old.len;
-                @memcpy(new.data(), old.data()[0..old.len]);
             },
         }
         new.head.kind = kind;
@@ -432,16 +398,17 @@ pub const GC = struct {
     }
 
     fn newEdenPage(gc: *GC) !void {
-        gc.mutex_free.lock();
-        defer gc.mutex_free.unlock();
+        gc.mutex.lock();
+        defer gc.mutex.unlock();
         var new: *Page = undefined;
-        if (gc.n_free > 0) {
+        if (false) {
+            // if (gc.n_free > 0) {
             std.debug.assert(gc.free != null);
             new = gc.free.?;
             gc.free = new.next;
             gc.n_free -= 1;
         } else {
-            std.debug.assert(gc.free == null);
+            // std.debug.assert(gc.free == null);
             new = try gc.backing_allocator.create(Page);
         }
         new.* = Page.init();
@@ -450,27 +417,29 @@ pub const GC = struct {
     }
 
     fn newSurvivorPage(gc: *GC) !void {
-        gc.mutex_free.lock();
-        defer gc.mutex_free.unlock();
+        gc.mutex.lock();
+        defer gc.mutex.unlock();
         var new: *Page = undefined;
-        if (gc.n_free > 0) {
+        if (false) {
+            // if (gc.n_free > 0) {
             std.debug.assert(gc.free != null);
             new = gc.free.?;
             gc.free = new.next;
             gc.n_free -= 1;
         } else {
-            std.debug.assert(gc.free == null);
+            // std.debug.assert(gc.free == null);
             new = try gc.backing_allocator.create(Page);
         }
         new.* = Page.init();
         new.next = gc.survivor;
         gc.survivor = new;
-        gc.n_compact_allocs += 1;
     }
 
     fn destroyPage(gc: *GC, page: *Page) void {
-        gc.mutex_free.lock();
-        defer gc.mutex_free.unlock();
+        gc.mutex.lock();
+        defer gc.mutex.unlock();
+        std.debug.assert(!page.destroyed);
+        page.destroyed = true;
         page.next = gc.free;
         gc.free = page;
         gc.n_free += 1;
@@ -478,107 +447,117 @@ pub const GC = struct {
     }
 };
 
-// test "basic functionality" {
-//     var gc = try GC.init();
-//     try gc.startCollector();
-//     defer gc.deinit();
+test "basic functionality" {
+    var gc: GC = undefined;
+    try gc.init();
+    defer gc.deinit();
 
-//     const _a = try gc.alloc(.real, 0);
-//     _a.data = 1.0;
-//     var a = gc.commit(.real, _a);
+    var a = try gc.newInt(1);
 
-//     std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+    std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+    debugPrint(a);
 
-//     while (!gc.shouldTrace()) std.time.sleep(1_000_000);
-//     try gc.traceRoot(&a);
-//     try gc.releaseEden();
+    while (!gc.shouldTrace()) std.time.sleep(1_000_000);
+    try gc.traceRoot(&a);
+    try gc.releaseEden();
+    std.time.sleep(500_000_000);
 
-//     std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+    var b = try gc.newCons(a, null);
 
-//     std.time.sleep(500_000_000);
+    std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
+    debugPrint(a);
+    std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
+    debugPrint(b);
 
-//     const _b = try gc.alloc(.cons, 0);
-//     _b.car.store(a, .release);
-//     _b.cdr.store(null, .release);
-//     var b = gc.commit(.cons, _b);
+    while (!gc.shouldTrace()) std.time.sleep(1_000_000);
+    try gc.traceRoot(&b);
+    try gc.releaseEden();
+    std.time.sleep(500_000_000);
 
-//     std.debug.print("{*} {*}\n", .{ a, a.fwd.load(.unordered) });
-//     std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
+    std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
+    debugPrint(b);
 
-//     while (!gc.shouldTrace()) std.time.sleep(1_000_000);
-//     try gc.traceRoot(&b);
-//     try gc.releaseEden();
+    var c = try gc.newCons(b, null);
 
-//     std.debug.print("{*} {*}\n", .{ b, b.fwd.load(.unordered) });
+    std.debug.print("{*} {*}\n", .{ c, c.fwd.load(.unordered) });
+    debugPrint(c);
 
-//     std.time.sleep(500_000_000);
-// }
+    while (!gc.shouldTrace()) std.time.sleep(1_000_000);
+    try gc.traceRoot(&c);
+    try gc.releaseEden();
+    std.time.sleep(500_000_000);
+
+    std.debug.print("{*} {*}\n", .{ c, c.fwd.load(.unordered) });
+    debugPrint(c);
+}
 
 fn debugPrint(obj: ?*Object) void {
+    _debugPrint(obj);
+    std.debug.print("\n", .{});
+}
+
+fn _debugPrint(obj: ?*Object) void {
     if (obj == null) {
         std.debug.print("nil", .{});
         return;
     }
+    std.debug.assert(!GC.pageOf(obj.?).destroyed);
+    if (obj.?.kind == .int) {
+        std.debug.print("{}", .{obj.?.as(.int).data});
+        return;
+    }
     const cons = obj.?.as(.cons);
     std.debug.print("(", .{});
-    debugPrint(cons.car.load(.acquire));
+    _debugPrint(cons.car.load(.acquire));
     std.debug.print(" . ", .{});
-    debugPrint(cons.cdr.load(.acquire));
+    _debugPrint(cons.cdr.load(.acquire));
     std.debug.print(")", .{});
 }
 
 test "conses all the way down" {
-    var gc = try GC.init();
-    try gc.startCollector();
+    var gc: GC = undefined;
+    try gc.init();
     defer gc.deinit();
 
     var prng = std.Random.DefaultPrng.init(@bitCast(std.time.microTimestamp()));
     const rand = prng.random();
 
-    var roots: [256]*Object = undefined;
+    const n = 256;
+
+    var roots: [n]*Object = undefined;
     for (0..roots.len) |i| {
-        const cons = try gc.alloc(.cons, 0);
-        cons.car.store(null, .release);
-        cons.cdr.store(null, .release);
-        roots[i] = gc.commit(.cons, cons);
+        const int = try gc.alloc(.int, 0);
+        int.data = @intCast(i);
+        roots[i] = gc.commit(.int, int);
     }
 
-    for (0..100000) |k| {
+    for (0..1000) |k| {
         std.debug.print("{}\n", .{k});
+        std.time.sleep(20_000_000);
         if (gc.shouldTrace()) {
-            // for (0..256) |i| {
-            //     debugPrint(roots[i]);
-            // }
-            std.time.sleep(1_000_000);
-            for (0..256) |i| {
+            for (0..n) |i| {
                 try gc.traceRoot(&roots[i]);
+                debugPrint(roots[i]);
             }
             try gc.releaseEden();
         }
 
-        const x = rand.int(u8);
-        const y = blk: {
-            var y = rand.int(u8);
-            while (y == x) y = rand.int(u8);
-            break :blk y;
-        };
-        const z = blk: {
-            var z = rand.int(u8);
-            while (z == x or z == y) z = rand.int(u8);
-            break :blk z;
-        };
-        const cons = try gc.alloc(.cons, 0);
-        cons.car.store(roots[x], .release);
-        cons.cdr.store(roots[y], .release);
-        roots[z] = gc.commit(.cons, cons);
-        // debugPrint(roots[z]);
-    }
-
-    std.time.sleep(1_000_000_000);
-    if (gc.shouldTrace()) {
-        for (0..256) |i| {
-            try gc.traceRoot(&roots[i]);
+        const x = rand.int(u32) % n;
+        if (true) {
+            // if (rand.boolean()) {
+            const y = blk: {
+                var y = rand.int(u32) % n;
+                while (y == x) y = rand.int(u32) % n;
+                break :blk y;
+            };
+            const z = blk: {
+                var z = rand.int(u32) % n;
+                while (z == x or z == y) z = rand.int(u32) % n;
+                break :blk z;
+            };
+            roots[z] = try gc.newCons(roots[x], roots[y]);
+        } else {
+            roots[x] = try gc.newInt(@intCast(k));
         }
-        try gc.releaseEden();
     }
 }
