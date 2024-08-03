@@ -1,10 +1,17 @@
 const std = @import("std");
-const Object = @import("../object.zig").Object;
-const rng = @import("../shared_rng.zig");
+const GC = @import("gc.zig").GC;
+const Object = @import("object.zig").Object;
+const rng = @import("shared_rng.zig");
 
 pub const ObjectReal = extern struct {
     head: Object,
     data: f64,
+
+    pub fn create(gc: *GC, val: f64) *Object {
+        const obj = gc.alloc(.real, 0) catch @panic("GC allocation failure");
+        obj.data = val;
+        return gc.commit(.real, obj);
+    }
 
     pub fn hash(real: *ObjectReal, seed: u64) u64 {
         // make +0 and -0 hash to the same value, since they compare equal
@@ -12,7 +19,7 @@ pub const ObjectReal = extern struct {
         if (real.data == 0) return (seed ^ 15345951513627307427) *% 11490803873075654471;
         // make NaN random, since it compares unequal
         // avoids performance degradation when inserting many NaN keys (not recommended though)
-        if (real.data != real.data) return rng.int(64);
+        if (real.data != real.data) return rng.int(u64);
         return std.hash.XxHash3.hash(seed, std.mem.asBytes(&real.data));
     }
 

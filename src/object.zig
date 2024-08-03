@@ -1,10 +1,9 @@
 const std = @import("std");
 
-const Page = @import("gc.zig").Page;
-pub const ObjectReal = @import("object/real.zig").ObjectReal;
-pub const ObjectString = @import("object/string.zig").ObjectString;
-pub const ObjectCons = @import("object/cons.zig").ObjectCons;
-pub const ObjectMap = @import("object/map.zig").ObjectMap;
+pub const ObjectReal = @import("real.zig").ObjectReal;
+pub const ObjectString = @import("string.zig").ObjectString;
+pub const ObjectCons = @import("cons.zig").ObjectCons;
+pub const ObjectMap = @import("map.zig").ObjectMap;
 
 pub const Kind = enum(u8) {
     real,
@@ -63,4 +62,43 @@ pub const Object = extern struct {
 comptime {
     std.debug.assert(@alignOf(Object) == 16);
     std.debug.assert(@sizeOf(Object) == 16);
+}
+
+pub fn eql(obj1: ?*Object, obj2: ?*Object) bool {
+    if (obj1 == obj2) return true;
+    if (obj1 == null or obj2 == null) return false;
+    if (obj1.?.kind != obj2.?.kind) return false;
+    return switch (obj1.?.kind) {
+        .real => obj1.?.as(.real).data == obj2.?.as(.real).data,
+        .cons => blk: {
+            const cons1 = obj1.?.as(.cons);
+            const cons2 = obj2.?.as(.cons);
+            break :blk eql(cons1.car.load(.acquire), cons2.car.load(.acquire)) and
+                eql(cons1.cdr.load(.acquire), cons2.cdr.load(.acquire));
+        },
+        .map => blk: {
+            const map1 = obj1.?.as(.map);
+            const map2 = obj2.?.as(.map);
+            if (map1.datamask != map2.datamask or
+                map1.nodemask != map2.nodemask) break :blk false;
+            std.debug.assert(map1.datalen == map2.datalen);
+            std.debug.assert(map1.nodelen == map2.nodelen);
+            const data1 = map1.data();
+            const data2 = map2.data();
+            for (0..2 * map1.datalen + map1.nodelen) |i| {
+                if (!eql(data1[i].load(.acquire), data2[i].load(.acquire))) break :blk false;
+            }
+            break :blk true;
+        },
+        .string => blk: {
+            const string1 = obj1.?.as(.string);
+            const string2 = obj2.?.as(.string);
+            if (string1.len != string2.len) break :blk false;
+            break :blk std.mem.eql(
+                u8,
+                string1.data()[0..string1.len],
+                string2.data()[0..string2.len],
+            );
+        },
+    };
 }

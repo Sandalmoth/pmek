@@ -21,7 +21,7 @@ pub fn float(comptime T: type) T {
     return rng.random().float(T);
 }
 
-fn int(comptime T: type) T {
+pub fn int(comptime T: type) T {
     mutex.lock();
     defer mutex.unlock();
     return rng.random().int(T);

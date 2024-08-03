@@ -501,7 +501,6 @@ test "conses all the way down" {
 
         const x = rand.int(u8);
         if (rand.boolean()) {
-            // if (true) {
             const y = blk: {
                 var y = rand.int(u8);
                 while (y == x) y = rand.int(u8);
@@ -522,7 +521,6 @@ test "conses all the way down" {
             cons.cdr.store(null, .release);
             roots[x] = gc.commit(.cons, cons);
         }
-        // debugPrint(roots[z]);
     }
 
     std.time.sleep(1_000_000_000);
