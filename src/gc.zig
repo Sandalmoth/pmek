@@ -89,7 +89,7 @@ pub const GC = struct {
     waiting_for_roots: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     collector_should_run: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
     collect_timer: std.time.Timer,
-    collect_interval: u64 = 10_000_000,
+    collect_interval: u64 = 100_000_000,
 
     pub inline fn init() !GC {
         const gc = GC{
@@ -210,12 +210,10 @@ pub const GC = struct {
         // move eden-space to from-space
         gc.discard = gc.from;
 
-        if (builtin.mode != .ReleaseFast) {
-            var walk = gc.discard;
-            while (walk) |p| {
-                p.discarded = true;
-                walk = p.next;
-            }
+        var walk = gc.discard;
+        while (walk) |p| {
+            p.discarded = true;
+            walk = p.next;
         }
 
         gc.from = gc.eden;
@@ -226,13 +224,16 @@ pub const GC = struct {
     }
 
     fn collector(gc: *GC) !void {
-        while (gc.collector_should_run.load(.acquire)) {
-            while (gc.collect_timer.read() < gc.collect_interval) std.time.sleep(1_000_000);
+        loop: while (true) {
             gc.collect_timer.reset();
+            while (gc.collect_timer.read() < gc.collect_interval) {
+                if (!gc.collector_should_run.load(.acquire)) break :loop;
+                std.time.sleep(1_000_000);
+            }
             gc.waiting_for_roots.store(true, .release);
 
             while (gc.waiting_for_roots.load(.acquire)) {
-                if (!gc.collector_should_run.load(.acquire)) return;
+                if (!gc.collector_should_run.load(.acquire)) break :loop;
                 std.time.sleep(1_000_000);
             }
             try gc.collect();
@@ -240,7 +241,7 @@ pub const GC = struct {
     }
 
     fn collect(gc: *GC) !void {
-        std.debug.print("######## ran collect {}\n", .{multithreaded});
+        std.debug.print("######## start collect {}\n", .{multithreaded});
 
         // CONCURRENT
         // move some of survivor-space to from-space (dynamic probability?)
@@ -296,7 +297,9 @@ pub const GC = struct {
             @as(f64, @floatFromInt(n_from));
         gc.p_compact = 1.0 - ratio;
 
-        gc.waiting_for_roots.store(true, .release);
+        std.debug.print("p_next = {}\n", .{gc.p_compact});
+
+        std.debug.print("end collect ########## {}\n", .{multithreaded});
     }
 
     fn pageOf(obj: *Object) *Page {
@@ -351,7 +354,8 @@ pub const GC = struct {
         const obj = ptr orelse return;
         // now, replicate if we are on a marked page
         // and we haven't already been replicated
-        if (obj == obj.fwd.load(.acquire) and pageOf(obj).mark) {
+        if (obj != obj.fwd.load(.acquire)) return;
+        if (pageOf(obj).mark) {
             const r = switch (obj.kind) {
                 .real => try gc.dup(.real, obj),
                 .cons => try gc.dup(.cons, obj),
@@ -543,39 +547,47 @@ test "conses all the way down" {
         roots[i] = gc.commit(.cons, cons);
     }
 
-    for (0..100000) |k| {
+    for (0..4000) |k| {
         std.debug.print("{}\n", .{k});
         if (gc.shouldTrace()) {
-            // for (0..256) |i| {
-            //     debugPrint(roots[i]);
-            // }
-            std.time.sleep(1_000_000);
+            std.debug.print("#########################################\n", .{});
             for (0..256) |i| {
                 try gc.traceRoot(&roots[i]);
             }
             try gc.releaseEden();
         }
 
+        std.time.sleep(1_000_000);
+
         const x = rand.int(u8);
-        const y = blk: {
-            var y = rand.int(u8);
-            while (y == x) y = rand.int(u8);
-            break :blk y;
-        };
-        const z = blk: {
-            var z = rand.int(u8);
-            while (z == x or z == y) z = rand.int(u8);
-            break :blk z;
-        };
-        const cons = try gc.alloc(.cons, 0);
-        cons.car.store(roots[x], .release);
-        cons.cdr.store(roots[y], .release);
-        roots[z] = gc.commit(.cons, cons);
+        if (rand.boolean()) {
+            // if (true) {
+            const y = blk: {
+                var y = rand.int(u8);
+                while (y == x) y = rand.int(u8);
+                break :blk y;
+            };
+            const z = blk: {
+                var z = rand.int(u8);
+                while (z == x or z == y) z = rand.int(u8);
+                break :blk z;
+            };
+            const cons = try gc.alloc(.cons, 0);
+            cons.car.store(roots[x], .release);
+            cons.cdr.store(roots[y], .release);
+            roots[z] = gc.commit(.cons, cons);
+        } else {
+            const cons = try gc.alloc(.cons, 0);
+            cons.car.store(null, .release);
+            cons.cdr.store(null, .release);
+            roots[x] = gc.commit(.cons, cons);
+        }
         // debugPrint(roots[z]);
     }
 
     std.time.sleep(1_000_000_000);
     if (gc.shouldTrace()) {
+        std.debug.print("HOWDY\n", .{});
         for (0..256) |i| {
             try gc.traceRoot(&roots[i]);
         }
