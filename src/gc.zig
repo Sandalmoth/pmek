@@ -1,60 +1,10 @@
 const std = @import("std");
 
-const Kind = enum(u8) {
-    real,
-    cons,
-};
+const Kind = @import("object.zig").Kind;
+pub const Object = @import("object.zig").Object;
+const ObjectType = @import("object.zig").ObjectType;
 
-pub const Object = extern struct {
-    kind: Kind align(16),
-    _pad: [7]u8,
-
-    pub fn as(obj: *Object, comptime kind: Kind) *ObjectType(kind) {
-        return @alignCast(@ptrCast(obj));
-    }
-
-    pub fn page(obj: *Object) *Page {
-        const mask: usize = ~(@as(usize, std.mem.page_size) - 1);
-        return @ptrFromInt(@intFromPtr(obj) & mask);
-    }
-};
-
-const ObjectReal = extern struct {
-    kind: Kind align(16),
-    _pad: [7]u8,
-    val: f64,
-
-    fn size(len: usize) usize {
-        std.debug.assert(len == 0);
-        return std.mem.alignForwardLog2(@sizeOf(ObjectReal), 4);
-    }
-};
-
-const ObjectCons = extern struct {
-    kind: Kind align(16),
-    _pad: [7]u8,
-    car: ?*Object,
-    cdr: ?*Object,
-
-    fn size(len: usize) usize {
-        std.debug.assert(len == 0);
-        return std.mem.alignForwardLog2(@sizeOf(ObjectCons), 4);
-    }
-};
-
-fn ObjectType(comptime kind: Kind) type {
-    return switch (kind) {
-        .real => ObjectReal,
-        .cons => ObjectCons,
-    };
-}
-
-comptime {
-    std.debug.assert(@sizeOf(Object) <= 16);
-    std.debug.assert(@alignOf(Object) == 16);
-}
-
-const Page = struct {
+pub const Page = struct {
     const LINE_SIZE = 256;
 
     // spend one line on metadata, and one mark byte per line, how many lines can fit?
@@ -383,46 +333,24 @@ const GCCollector = struct {
                 gcc.trace(cons.car);
                 gcc.trace(cons.cdr);
             },
+            .string => obj.page().markObject(obj, .string, obj.as(.string).len),
+            .map => {
+                obj.page().markObject(obj, .map, 0);
+                const map = obj.as(.map);
+                gcc.trace(@alignCast(@ptrCast(map.root)));
+                gcc.trace(@alignCast(@ptrCast(map.meta)));
+            },
+            .champ => {
+                const champ = obj.as(.champ);
+                obj.page().markObject(obj, .champ, 2 * champ.datalen + champ.nodelen);
+                const nodes = champ.nodes();
+                const data = champ.data();
+                for (0..champ.nodelen) |i| gcc.trace(nodes[i]);
+                for (0..2 * champ.datalen) |i| gcc.trace(data[i]);
+            },
         }
     }
 };
-
-// test "scratch" {
-//     std.debug.print("{} {}\n", .{ @sizeOf(ObjectReal), @alignOf(ObjectReal) });
-//     std.debug.print("{} {}\n", .{ @sizeOf(ObjectCons), @alignOf(ObjectCons) });
-//     const p: Page = undefined;
-//     std.debug.print("{} {}\n", .{ p.marks.len, p.data.len });
-
-//     const gc = GC.create(std.testing.allocator);
-//     defer gc.destroy();
-//     const gca = &gc.allocator;
-
-//     const a = gca.newReal(1.9);
-//     const b = gca.newReal(1.9);
-//     const c = gca.newCons(a, b);
-//     const d = gca.newReal(1.9);
-
-//     std.debug.print("{*}\n", .{a});
-//     std.debug.print("{*}\n", .{b});
-//     std.debug.print("{*}\n", .{c});
-//     std.debug.print("{*}\n", .{d});
-
-//     std.time.sleep(100_000_000);
-//     if (gca.shouldTrace()) {
-//         std.debug.print("we should trace\n", .{});
-//         gca.traceRoot(c);
-//         gca.traceRoot(d);
-//         gca.endTrace();
-//     }
-//     std.time.sleep(100_000_000);
-
-//     std.debug.print("{*}\n", .{a});
-//     std.debug.print("{*}\n", .{b});
-//     std.debug.print("{*}\n", .{c});
-//     std.debug.print("{*}\n", .{d});
-
-//     std.debug.print("{any}\n", .{d.page().marks});
-// }
 
 test "cons-mania" {
     const gc = GC.create(std.testing.allocator);
@@ -436,7 +364,7 @@ test "cons-mania" {
     var roots: [n]?*Object = [_]?*Object{null} ** n;
 
     for (0..1_000_000) |i| {
-        std.time.sleep(1);
+        // std.time.sleep(1);
         if (rand.boolean()) {
             const x = rand.int(u32) % n;
             const y = blk: {
@@ -461,6 +389,6 @@ test "cons-mania" {
             }
             gca.endTrace();
         }
-        if (i % 10_000 == 0) std.debug.print("{}\t{}\n", .{ i, gc.n_pages });
+        // if (i % 10_000 == 0) std.debug.print("{}\t{}\n", .{ i, gc.n_pages });
     }
 }
