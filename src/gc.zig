@@ -52,7 +52,7 @@ pub const Page = struct {
 
     pub fn isFull(page: *Page) bool {
         std.debug.assert(page.start <= page.data.len);
-        return page.start + 16 > page.data.len;
+        return page.start >= page.data.len;
     }
 
     pub fn isFree(page: *Page) bool {
@@ -67,6 +67,7 @@ pub const Page = struct {
         const obj: *ObjectType(kind) = @alignCast(@ptrCast(&page.data[page.start]));
         obj.kind = kind;
         page.start += sz;
+        std.debug.assert(page.start <= page.end);
         if (page.start >= page.end) page.nextRegion(false);
         return obj;
     }
@@ -81,9 +82,10 @@ pub const Page = struct {
 
     pub fn markObject(page: *Page, obj: *Object, comptime kind: Kind, len: usize) void {
         std.debug.assert(page == obj.page());
+        std.debug.assert(obj.kind == kind);
         const sz = ObjectType(kind).size(len);
         const of = @intFromPtr(obj) - @intFromPtr(&page.data[0]);
-        page.markRange(sz, of + sz);
+        page.markRange(of, of + sz);
     }
 };
 
@@ -201,14 +203,14 @@ pub const GC = struct {
     }
 };
 
-const GCAllocator = struct {
+pub const GCAllocator = struct {
     gc: *GC,
     free: *Page, // not a linked list
     recycled: *Page, // not a linked list
     used: ?*Page,
     roots: std.ArrayList(*Object),
 
-    fn new(gca: *GCAllocator, comptime kind: Kind, len: usize) *ObjectType(kind) {
+    pub fn new(gca: *GCAllocator, comptime kind: Kind, len: usize) *ObjectType(kind) {
         if (Page.useBackupAllocator(kind, len)) {
             @panic("TODO");
         }
@@ -234,6 +236,22 @@ const GCAllocator = struct {
         const obj = gca.new(.cons, 0);
         obj.car = car;
         obj.cdr = cdr;
+        return @alignCast(@ptrCast(obj));
+    }
+
+    pub fn newString(gca: *GCAllocator, val: []const u8) *Object {
+        const obj = gca.new(.string, val.len);
+        obj.len = val.len;
+        @memcpy(obj.data(), val);
+        return @alignCast(@ptrCast(obj));
+    }
+
+    pub fn newChamp(gca: *GCAllocator) *Object {
+        const obj = gca.new(.champ, 0);
+        obj.datamask = 0;
+        obj.nodemask = 0;
+        obj.datalen = 0;
+        obj.nodelen = 0;
         return @alignCast(@ptrCast(obj));
     }
 
@@ -334,19 +352,11 @@ const GCCollector = struct {
                 gcc.trace(cons.cdr);
             },
             .string => obj.page().markObject(obj, .string, obj.as(.string).len),
-            .map => {
-                obj.page().markObject(obj, .map, 0);
-                const map = obj.as(.map);
-                gcc.trace(@alignCast(@ptrCast(map.root)));
-                gcc.trace(@alignCast(@ptrCast(map.meta)));
-            },
             .champ => {
                 const champ = obj.as(.champ);
                 obj.page().markObject(obj, .champ, 2 * champ.datalen + champ.nodelen);
-                const nodes = champ.nodes();
                 const data = champ.data();
-                for (0..champ.nodelen) |i| gcc.trace(nodes[i]);
-                for (0..2 * champ.datalen) |i| gcc.trace(data[i]);
+                for (0..2 * champ.datalen + champ.nodelen) |i| gcc.trace(data[i]);
             },
         }
     }

@@ -1,0 +1,4 @@
+bak
+zig-out
+.zig-cache
+perf.*
