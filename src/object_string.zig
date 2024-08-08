@@ -11,6 +11,11 @@ pub const ObjectString = extern struct {
         return std.mem.alignForwardLog2(@sizeOf(ObjectString) + _len, 4);
     }
 
+    pub fn hash(objstring: *ObjectString, level: u64) u64 {
+        const seed = 11400714819323198393 *% (level + 1);
+        return std.hash.XxHash3.hash(seed, objstring.slice());
+    }
+
     pub fn data(objstring: *ObjectString) [*]u8 {
         return @ptrFromInt(@intFromPtr(&objstring.len) + @sizeOf(usize));
     }

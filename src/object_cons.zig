@@ -13,4 +13,12 @@ pub const ObjectCons = extern struct {
         std.debug.assert(len == 0);
         return std.mem.alignForwardLog2(@sizeOf(ObjectCons), 4);
     }
+
+    pub fn hash(objcons: *ObjectCons, level: u64) u64 {
+        var h: u64 = 15369349197182521259;
+        h ^= Object.hash(objcons.car, level);
+        h *%= 16032255716647975327;
+        h ^= Object.hash(objcons.car, level);
+        return h;
+    }
 };

@@ -14,6 +14,13 @@ pub const ObjectMap = extern struct {
         std.debug.assert(_len == 0);
         return std.mem.alignForwardLog2(@sizeOf(ObjectMap), 4);
     }
+
+    pub fn hash(objmap: *ObjectMap, level: u64) u64 {
+        var h: u64 = 14568007547523660521;
+        h ^= Object.hash(objmap.root, level);
+        h ^= Object.hash(objmap.meta, level);
+        return h;
+    }
 };
 
 pub const ObjectChamp = extern struct {
@@ -26,6 +33,15 @@ pub const ObjectChamp = extern struct {
 
     pub fn size(_len: usize) usize {
         return std.mem.alignForwardLog2(@sizeOf(ObjectChamp) + @sizeOf(usize) * _len, 4);
+    }
+
+    pub fn hash(objchamp: *ObjectChamp, level: u64) u64 {
+        var h: u64 = 13015751150583452993;
+        for (0..2 * objchamp.datalen + objchamp.nodelen) |i| {
+            h ^= Object.hash(objchamp.data()[i], level);
+            h *%= 16918459230259101617;
+        }
+        return h;
     }
 
     pub fn data(champ: *ObjectChamp) [*]?*Object {

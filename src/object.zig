@@ -39,6 +39,20 @@ pub const Object = extern struct {
         const mask: usize = ~(@as(usize, std.mem.page_size) - 1);
         return @ptrFromInt(@intFromPtr(obj) & mask);
     }
+
+    pub fn hash(obj: ?*Object, level: usize) u64 {
+        if (obj == null) {
+            const seed = 11400714819323198393 *% (level + 1);
+            return seed *% 12542518518317951677 +% 14939819388667570391;
+        }
+        switch (obj.kind) {
+            .real => obj.as(.real).hash(level),
+            .cons => obj.as(.cons).hash(level),
+            .string => obj.as(.string).hash(level),
+            .map => obj.as(.map).hash(level),
+            .champ => obj.as(.champ).hash(level),
+        }
+    }
 };
 
 comptime {
