@@ -6,12 +6,14 @@ const ObjectReal = @import("object_real.zig").ObjectReal;
 const ObjectCons = @import("object_cons.zig").ObjectCons;
 const ObjectString = @import("object_string.zig").ObjectString;
 const ObjectChamp = @import("object_champ.zig").ObjectChamp;
+const ObjectVector = @import("object_vector.zig").ObjectVector;
 
 pub const Kind = enum(u8) {
     real,
     cons,
     string,
     champ,
+    vector,
 };
 
 pub fn ObjectType(comptime kind: Kind) type {
@@ -20,6 +22,7 @@ pub fn ObjectType(comptime kind: Kind) type {
         .cons => ObjectCons,
         .string => ObjectString,
         .champ => ObjectChamp,
+        .vector => ObjectVector,
     };
 }
 
@@ -47,6 +50,7 @@ pub const Object = extern struct {
             .cons => obj.?.as(.cons).hash(level),
             .string => obj.?.as(.string).hash(level),
             .champ => obj.?.as(.champ).hash(level),
+            .vector => obj.?.as(.vector).hash(level),
         };
     }
 };
@@ -91,6 +95,17 @@ pub fn eql(obj1: ?*Object, obj2: ?*Object) bool {
             }
             break :blk true;
         },
+        .vector => blk: {
+            const vec1 = obj1.?.as(.vector);
+            const vec2 = obj2.?.as(.vector);
+            if (vec1.len != vec2.len or vec1.level != vec2.level) break :blk false;
+            const data1 = vec1.data();
+            const data2 = vec2.data();
+            for (0..vec1.len) |i| {
+                if (!eql(data1[i], data2[i])) break :blk false;
+            }
+            break :blk true;
+        },
     };
 }
 
@@ -125,14 +140,19 @@ fn _printImpl(_obj: ?*Object, writer: anytype) anyerror!void {
             }
             try writer.print(")", .{});
         },
+        .string => {
+            const str = obj.as(.string);
+            try writer.print("\"{s}\"", .{str.data()[0..str.len]});
+        },
         .champ => {
             try writer.print("{{", .{});
             try _printChamp(obj, true, writer);
             try writer.print("}}", .{});
         },
-        .string => {
-            const str = obj.as(.string);
-            try writer.print("\"{s}\"", .{str.data()[0..str.len]});
+        .vector => {
+            try writer.print("[", .{});
+            try _printVector(obj, true, writer);
+            try writer.print("]", .{});
         },
     }
 }
@@ -152,5 +172,19 @@ fn _printChamp(obj: *Object, first: bool, writer: anytype) anyerror!void {
     for (0..champ.nodelen) |i| {
         const child = champ.nodes()[i];
         try _printChamp(child, first and i == 0 and !not_first, writer);
+    }
+}
+
+fn _printVector(obj: *Object, first: bool, writer: anytype) anyerror!void {
+    const vec = obj.as(.vector);
+    for (0..vec.len) |i| {
+        const val = vec.data()[i];
+        if (vec.level == 0) {
+            if (!first or i > 0) try writer.print(" ", .{});
+            try _printImpl(val, writer);
+        } else {
+            std.debug.assert(val != null);
+            try _printVector(val.?, first and i == 0, writer);
+        }
     }
 }

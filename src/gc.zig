@@ -255,6 +255,13 @@ pub const GCAllocator = struct {
         return @alignCast(@ptrCast(obj));
     }
 
+    pub fn newVector(gca: *GCAllocator) *Object {
+        const obj = gca.new(.vector, 0);
+        obj.level = 0;
+        obj.len = 0;
+        return @alignCast(@ptrCast(obj));
+    }
+
     fn newFree(gca: *GCAllocator) void {
         gca.free.next = gca.used;
         gca.used = gca.free;
@@ -357,6 +364,12 @@ const GCCollector = struct {
                 obj.page().markObject(obj, .champ, 2 * champ.datalen + champ.nodelen);
                 const data = champ.data();
                 for (0..2 * champ.datalen + champ.nodelen) |i| gcc.trace(data[i]);
+            },
+            .vector => {
+                const vec = obj.as(.vector);
+                obj.page().markObject(obj, .vector, vec.len);
+                const data = vec.data();
+                for (0..vec.len) |i| gcc.trace(data[i]);
             },
         }
     }
