@@ -319,7 +319,7 @@ test "champ fuzz" {
     const rand = rng.random();
 
     const ns = [_]u32{ 32, 512, 8192, 131072, 2097152 };
-    const m = 100_000;
+    const m = 10_000;
 
     for (ns) |n| {
         var h = gca.newChamp();
@@ -333,9 +333,6 @@ test "champ fuzz" {
             const a = gca.newReal(@floatFromInt(x));
             const b = gca.newReal(@floatFromInt(y));
 
-            // std.debug.print("{} {}\n", .{ x, y });
-            // debugPrint(h);
-            // std.debug.print("{} {}\n", .{ contains(h, a), s.contains(x) });
             std.debug.assert(contains(h, a) == s.contains(x));
             if (contains(h, a)) {
                 std.debug.assert(

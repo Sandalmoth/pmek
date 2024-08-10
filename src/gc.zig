@@ -255,8 +255,8 @@ pub const GCAllocator = struct {
         return @alignCast(@ptrCast(obj));
     }
 
-    pub fn newVector(gca: *GCAllocator) *Object {
-        const obj = gca.new(.vector, 0);
+    pub fn newAmt(gca: *GCAllocator) *Object {
+        const obj = gca.new(.amt, 0);
         obj.level = 0;
         obj.len = 0;
         return @alignCast(@ptrCast(obj));
@@ -365,11 +365,11 @@ const GCCollector = struct {
                 const data = champ.data();
                 for (0..2 * champ.datalen + champ.nodelen) |i| gcc.trace(data[i]);
             },
-            .vector => {
-                const vec = obj.as(.vector);
-                obj.page().markObject(obj, .vector, vec.len);
-                const data = vec.data();
-                for (0..vec.len) |i| gcc.trace(data[i]);
+            .amt => {
+                const amt = obj.as(.amt);
+                obj.page().markObject(obj, .amt, amt.len);
+                const data = amt.data();
+                for (0..amt.len) |i| gcc.trace(data[i]);
             },
         }
     }

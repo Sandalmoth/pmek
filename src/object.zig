@@ -6,14 +6,14 @@ const ObjectReal = @import("object_real.zig").ObjectReal;
 const ObjectCons = @import("object_cons.zig").ObjectCons;
 const ObjectString = @import("object_string.zig").ObjectString;
 const ObjectChamp = @import("object_champ.zig").ObjectChamp;
-const ObjectVector = @import("object_vector.zig").ObjectVector;
+const ObjectAmt = @import("object_amt.zig").ObjectAmt;
 
 pub const Kind = enum(u8) {
     real,
     cons,
     string,
     champ,
-    vector,
+    amt,
 };
 
 pub fn ObjectType(comptime kind: Kind) type {
@@ -22,7 +22,7 @@ pub fn ObjectType(comptime kind: Kind) type {
         .cons => ObjectCons,
         .string => ObjectString,
         .champ => ObjectChamp,
-        .vector => ObjectVector,
+        .amt => ObjectAmt,
     };
 }
 
@@ -50,7 +50,7 @@ pub const Object = extern struct {
             .cons => obj.?.as(.cons).hash(level),
             .string => obj.?.as(.string).hash(level),
             .champ => obj.?.as(.champ).hash(level),
-            .vector => obj.?.as(.vector).hash(level),
+            .amt => obj.?.as(.amt).hash(level),
         };
     }
 };
@@ -95,13 +95,13 @@ pub fn eql(obj1: ?*Object, obj2: ?*Object) bool {
             }
             break :blk true;
         },
-        .vector => blk: {
-            const vec1 = obj1.?.as(.vector);
-            const vec2 = obj2.?.as(.vector);
-            if (vec1.len != vec2.len or vec1.level != vec2.level) break :blk false;
-            const data1 = vec1.data();
-            const data2 = vec2.data();
-            for (0..vec1.len) |i| {
+        .amt => blk: {
+            const amt1 = obj1.?.as(.amt);
+            const amt2 = obj2.?.as(.amt);
+            if (amt1.len != amt2.len or amt1.level != amt2.level) break :blk false;
+            const data1 = amt1.data();
+            const data2 = amt2.data();
+            for (0..amt1.len) |i| {
                 if (!eql(data1[i], data2[i])) break :blk false;
             }
             break :blk true;
@@ -149,9 +149,9 @@ fn _printImpl(_obj: ?*Object, writer: anytype) anyerror!void {
             try _printChamp(obj, true, writer);
             try writer.print("}}", .{});
         },
-        .vector => {
+        .amt => {
             try writer.print("[", .{});
-            try _printVector(obj, true, writer);
+            try _printAmt(obj, true, writer);
             try writer.print("]", .{});
         },
     }
@@ -175,16 +175,16 @@ fn _printChamp(obj: *Object, first: bool, writer: anytype) anyerror!void {
     }
 }
 
-fn _printVector(obj: *Object, first: bool, writer: anytype) anyerror!void {
-    const vec = obj.as(.vector);
-    for (0..vec.len) |i| {
-        const val = vec.data()[i];
-        if (vec.level == 0) {
+fn _printAmt(obj: *Object, first: bool, writer: anytype) anyerror!void {
+    const amt = obj.as(.amt);
+    for (0..amt.len) |i| {
+        const val = amt.data()[i];
+        if (amt.level == 0) {
             if (!first or i > 0) try writer.print(" ", .{});
             try _printImpl(val, writer);
         } else {
             std.debug.assert(val != null);
-            try _printVector(val.?, first and i == 0, writer);
+            try _printAmt(val.?, first and i == 0, writer);
         }
     }
 }
