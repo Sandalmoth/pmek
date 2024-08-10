@@ -268,6 +268,13 @@ pub const GCAllocator = struct {
         return @alignCast(@ptrCast(obj));
     }
 
+    pub fn newSymbol(gca: *GCAllocator, val: []const u8) *Object {
+        const obj = gca.new(.symbol, val.len);
+        obj.len = val.len;
+        @memcpy(obj.data(), val);
+        return @alignCast(@ptrCast(obj));
+    }
+
     fn newFree(gca: *GCAllocator) void {
         gca.free.next = gca.used;
         gca.used = gca.free;
@@ -373,6 +380,7 @@ const GCCollector = struct {
             },
             .primitive => obj.page().markObject(obj, .primitive, 0),
             .err => obj.page().markObject(obj, .err, obj.as(.err).len),
+            .symbol => obj.page().markObject(obj, .symbol, obj.as(.symbol).len),
         }
     }
 };

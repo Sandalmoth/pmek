@@ -13,7 +13,7 @@ pub const ObjectErr = extern struct {
 
     pub fn hash(objerr: *ObjectErr, level: u64) u64 {
         const seed = 11400714819323198393 *% (level + 1);
-        return std.hash.XxHash3.hash(~seed, objerr.slice());
+        return std.hash.XxHash3.hash(seed ^ 15882555672276140117, objerr.slice());
     }
 
     pub fn data(objerr: *ObjectErr) [*]u8 {

@@ -52,10 +52,15 @@ test "simple calls" {
 
     const prim_add = gca.newPrim(&add);
 
+    var acc: f64 = 0;
+
     var args: ?*Object = null;
     for (0..10) |i| {
-        debugPrint(args);
-        debugPrint(prim_add.as(.primitive).call(gca, args));
+        const sum = prim_add.as(.primitive).call(gca, args);
+        try std.testing.expect(sum.?.as(.real).val == acc);
+        // debugPrint(args);
+        // debugPrint(sum);
         args = gca.newCons(gca.newReal(@floatFromInt(i + 1)), args);
+        acc += @floatFromInt(i + 1);
     }
 }

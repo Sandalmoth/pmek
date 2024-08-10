@@ -8,6 +8,7 @@ const ObjectString = @import("object_string.zig").ObjectString;
 const ObjectChamp = @import("object_champ.zig").ObjectChamp;
 const ObjectPrimitive = @import("object_primitive.zig").ObjectPrimitive;
 const ObjectErr = @import("object_err.zig").ObjectErr;
+const ObjectSymbol = @import("object_symbol.zig").ObjectSymbol;
 
 pub const Kind = enum(u8) {
     real,
@@ -16,6 +17,7 @@ pub const Kind = enum(u8) {
     champ,
     primitive,
     err,
+    symbol,
 };
 
 pub fn ObjectType(comptime kind: Kind) type {
@@ -26,6 +28,7 @@ pub fn ObjectType(comptime kind: Kind) type {
         .champ => ObjectChamp,
         .primitive => ObjectPrimitive,
         .err => ObjectErr,
+        .symbol => ObjectSymbol,
     };
 }
 
@@ -55,6 +58,7 @@ pub const Object = extern struct {
             .champ => obj.?.as(.champ).hash(level),
             .primitive => obj.?.as(.primitive).hash(level),
             .err => obj.?.as(.err).hash(level),
+            .symbol => obj.?.as(.symbol).hash(level),
         };
     }
 };
@@ -101,6 +105,16 @@ pub fn eql(obj1: ?*Object, obj2: ?*Object) bool {
         },
         .primitive => obj1.?.as(.primitive).ptr == obj2.?.as(.primitive).ptr,
         .err => return false, // what is the desired behaviour?
+        .symbol => blk: {
+            const sym1 = obj1.?.as(.symbol);
+            const sym2 = obj2.?.as(.symbol);
+            if (sym1.len != sym2.len) break :blk false;
+            break :blk std.mem.eql(
+                u8,
+                sym1.data()[0..sym1.len],
+                sym2.data()[0..sym2.len],
+            );
+        },
     };
 }
 
@@ -148,6 +162,10 @@ fn _printImpl(_obj: ?*Object, writer: anytype) anyerror!void {
         .err => {
             const err = obj.as(.err);
             try writer.print("<ERROR: {s}>", .{err.data()[0..err.len]});
+        },
+        .symbol => {
+            const sym = obj.as(.symbol);
+            try writer.print("{s}", .{sym.data()[0..sym.len]});
         },
     }
 }
