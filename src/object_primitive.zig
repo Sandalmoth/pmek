@@ -50,9 +50,12 @@ test "simple calls" {
     defer gc.destroy();
     const gca = &gc.allocator;
 
-    const args1 = gca.newCons(gca.newReal(1.0), gca.newCons(gca.newReal(2.0), null));
     const prim_add = gca.newPrim(&add);
-    const sum1 = prim_add.as(.primitive).call(gca, args1);
-    debugPrint(args1);
-    debugPrint(sum1);
+
+    var args: ?*Object = null;
+    for (0..10) |i| {
+        debugPrint(args);
+        debugPrint(prim_add.as(.primitive).call(gca, args));
+        args = gca.newCons(gca.newReal(@floatFromInt(i + 1)), args);
+    }
 }
