@@ -46,11 +46,6 @@ pub fn get(objamt: ?*Object, index: usize) ?*Object {
     _ = index;
 }
 
-pub fn contains(objamt: ?*Object, index: usize) bool {
-    _ = objamt;
-    _ = index;
-}
-
 pub fn append(gca: *GCAllocator, objamt: ?*Object, objval: ?*Object) *Object {
     if (objamt == null) return gca.newAmt(); // could also be error?
     const amt = objamt.?.as(.amt);
@@ -104,7 +99,17 @@ pub fn append(gca: *GCAllocator, objamt: ?*Object, objval: ?*Object) *Object {
 }
 
 pub fn count(objamt: ?*Object) usize {
-    _ = objamt;
+    if (objamt == null) return 0;
+    const amt = objamt.?.as(.amt);
+
+    if (amt.len == 0) return 0;
+    if (amt.level == 0) return amt.len;
+
+    const len_left = std.math.powi(usize, OBJECTS_PER_LEVEL, amt.level) catch
+        @panic("Overflow in vector length");
+    const len_right = count(amt.data()[amt.len - 1]);
+    std.debug.print("level {} : {} {}\n", .{ amt.level, len_left * (amt.len - 1), len_right });
+    return len_left * (amt.len - 1) + len_right;
 }
 
 test "scratch" {
@@ -116,6 +121,8 @@ test "scratch" {
     debugPrint(v);
     for (0..100) |i| {
         v = append(gca, v, gca.newReal(@floatFromInt(i)));
+        std.debug.print("{}\t", .{count(v)});
         debugPrint(v);
+        std.debug.assert(count(v) == i + 1);
     }
 }

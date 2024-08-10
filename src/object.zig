@@ -177,6 +177,7 @@ fn _printChamp(obj: *Object, first: bool, writer: anytype) anyerror!void {
 
 fn _printAmt(obj: *Object, first: bool, writer: anytype) anyerror!void {
     const amt = obj.as(.amt);
+    std.debug.print("<", .{});
     for (0..amt.len) |i| {
         const val = amt.data()[i];
         if (amt.level == 0) {
@@ -187,4 +188,5 @@ fn _printAmt(obj: *Object, first: bool, writer: anytype) anyerror!void {
             try _printAmt(val.?, first and i == 0, writer);
         }
     }
+    std.debug.print(">", .{});
 }
