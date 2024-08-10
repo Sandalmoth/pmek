@@ -6,14 +6,16 @@ const ObjectReal = @import("object_real.zig").ObjectReal;
 const ObjectCons = @import("object_cons.zig").ObjectCons;
 const ObjectString = @import("object_string.zig").ObjectString;
 const ObjectChamp = @import("object_champ.zig").ObjectChamp;
-const ObjectAmt = @import("object_amt.zig").ObjectAmt;
+const ObjectPrimitive = @import("object_primitive.zig").ObjectPrimitive;
+const ObjectErr = @import("object_err.zig").ObjectErr;
 
 pub const Kind = enum(u8) {
     real,
     cons,
     string,
     champ,
-    amt,
+    primitive,
+    err,
 };
 
 pub fn ObjectType(comptime kind: Kind) type {
@@ -22,7 +24,8 @@ pub fn ObjectType(comptime kind: Kind) type {
         .cons => ObjectCons,
         .string => ObjectString,
         .champ => ObjectChamp,
-        .amt => ObjectAmt,
+        .primitive => ObjectPrimitive,
+        .err => ObjectErr,
     };
 }
 
@@ -50,7 +53,8 @@ pub const Object = extern struct {
             .cons => obj.?.as(.cons).hash(level),
             .string => obj.?.as(.string).hash(level),
             .champ => obj.?.as(.champ).hash(level),
-            .amt => obj.?.as(.amt).hash(level),
+            .primitive => obj.?.as(.primitive).hash(level),
+            .err => obj.?.as(.err).hash(level),
         };
     }
 };
@@ -95,17 +99,8 @@ pub fn eql(obj1: ?*Object, obj2: ?*Object) bool {
             }
             break :blk true;
         },
-        .amt => blk: {
-            const amt1 = obj1.?.as(.amt);
-            const amt2 = obj2.?.as(.amt);
-            if (amt1.len != amt2.len or amt1.level != amt2.level) break :blk false;
-            const data1 = amt1.data();
-            const data2 = amt2.data();
-            for (0..amt1.len) |i| {
-                if (!eql(data1[i], data2[i])) break :blk false;
-            }
-            break :blk true;
-        },
+        .primitive => obj1.?.as(.primitive).ptr == obj2.?.as(.primitive).ptr,
+        .err => return false, // what is the desired behaviour?
     };
 }
 
@@ -149,10 +144,10 @@ fn _printImpl(_obj: ?*Object, writer: anytype) anyerror!void {
             try _printChamp(obj, true, writer);
             try writer.print("}}", .{});
         },
-        .amt => {
-            try writer.print("[", .{});
-            try _printAmt(obj, true, writer);
-            try writer.print("]", .{});
+        .primitive => try writer.print("<PRIMITIVE>", .{}),
+        .err => {
+            const err = obj.as(.err);
+            try writer.print("<ERROR: {s}>", .{err.data()[0..err.len]});
         },
     }
 }
@@ -173,20 +168,4 @@ fn _printChamp(obj: *Object, first: bool, writer: anytype) anyerror!void {
         const child = champ.nodes()[i];
         try _printChamp(child, first and i == 0 and !not_first, writer);
     }
-}
-
-fn _printAmt(obj: *Object, first: bool, writer: anytype) anyerror!void {
-    const amt = obj.as(.amt);
-    std.debug.print("<", .{});
-    for (0..amt.len) |i| {
-        const val = amt.data()[i];
-        if (amt.level == 0) {
-            if (!first or i > 0) try writer.print(" ", .{});
-            try _printImpl(val, writer);
-        } else {
-            std.debug.assert(val != null);
-            try _printAmt(val.?, first and i == 0, writer);
-        }
-    }
-    std.debug.print(">", .{});
 }

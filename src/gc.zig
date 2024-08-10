@@ -255,10 +255,16 @@ pub const GCAllocator = struct {
         return @alignCast(@ptrCast(obj));
     }
 
-    pub fn newAmt(gca: *GCAllocator) *Object {
-        const obj = gca.new(.amt, 0);
-        obj.level = 0;
-        obj.len = 0;
+    pub fn newPrim(gca: *GCAllocator, ptr: *const fn (*GCAllocator, ?*Object) ?*Object) *Object {
+        const obj = gca.new(.primitive, 0);
+        obj.ptr = @ptrCast(ptr);
+        return @alignCast(@ptrCast(obj));
+    }
+
+    pub fn newErr(gca: *GCAllocator, val: []const u8) *Object {
+        const obj = gca.new(.err, val.len);
+        obj.len = val.len;
+        @memcpy(obj.data(), val);
         return @alignCast(@ptrCast(obj));
     }
 
@@ -365,12 +371,8 @@ const GCCollector = struct {
                 const data = champ.data();
                 for (0..2 * champ.datalen + champ.nodelen) |i| gcc.trace(data[i]);
             },
-            .amt => {
-                const amt = obj.as(.amt);
-                obj.page().markObject(obj, .amt, amt.len);
-                const data = amt.data();
-                for (0..amt.len) |i| gcc.trace(data[i]);
-            },
+            .primitive => obj.page().markObject(obj, .primitive, 0),
+            .err => obj.page().markObject(obj, .err, obj.as(.err).len),
         }
     }
 };
