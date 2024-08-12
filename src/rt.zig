@@ -5,6 +5,7 @@ const Object = @import("object.zig").Object;
 const GC = @import("gc.zig").GC;
 const GCAllocator = @import("gc.zig").GCAllocator;
 const debugPrint = @import("object.zig").debugPrint;
+const printAST = @import("object.zig").print;
 const parse = @import("parser.zig").parse;
 
 const champ = @import("object_champ.zig");
@@ -42,7 +43,9 @@ pub const RT = struct {
     }
 
     pub fn read(rt: *RT, src: []const u8) ?*Object {
-        return parse(rt.gc, src);
+        const result = parse(rt.gc, src);
+        debugPrint(result);
+        return result;
     }
 
     pub fn eval(rt: *RT, ast: ?*Object) ?*Object {
@@ -108,6 +111,12 @@ pub const RT = struct {
         _ = ast;
         _ = writer;
     }
+
+    pub fn rep(rt: *RT, src: []const u8, writer: anytype) !void {
+        const ast = rt.read(src);
+        const result = rt.eval(ast);
+        try printAST(result, writer);
+    }
 };
 
 test "scratch" {
@@ -156,4 +165,9 @@ test "scratch" {
     _ = rt.read("hello   ");
     _ = rt.read("\"hello\"");
     _ = rt.read("\"hello\"   ");
+
+    const stdout = std.io.getStdOut().writer();
+    try rt.rep("(+ 1 2)", stdout);
+    try rt.rep("(if true (+ 1 2) (+ 3 4))", stdout);
+    try rt.rep("(if false (+ 1 2) (+ 3 4))", stdout);
 }

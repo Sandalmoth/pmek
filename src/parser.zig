@@ -35,26 +35,29 @@ pub fn parse(gc: *GC, src: []const u8) ?*Object {
     std.debug.print("\n", .{});
 
     if (tokens.items.len == 0) return gc.allocator.newErr("parse: found no tokens");
-    return parseImpl(&gc.allocator, tokens, 0);
+    var cursor: usize = 0;
+    return parseImpl(&gc.allocator, tokens, &cursor);
 }
 
-fn parseImpl(gca: *GCAllocator, tokens: std.ArrayList(Token), cursor: usize) ?*Object {
-    switch (tokens.items[cursor]) {
+fn parseImpl(gca: *GCAllocator, tokens: std.ArrayList(Token), cursor: *usize) ?*Object {
+    switch (tokens.items[cursor.*]) {
         .nil => return null,
         .lpar => {
             var i: usize = 1;
             var list: ?*Object = null;
-            while (cursor + i < tokens.items.len and tokens.items[cursor + i] != .rpar) : (i += 1) {
+            while (cursor.* + i < tokens.items.len and tokens.items[cursor.* + i] != .rpar) : (i += 1) {
+                cursor.* += i;
+                i = 0;
                 list = gca.newCons(
-                    parseImpl(gca, tokens, cursor + i),
+                    parseImpl(gca, tokens, cursor),
                     list,
                 );
             }
-            if (cursor + i == tokens.items.len or tokens.items[cursor + i] != .rpar) {
+            if (cursor.* + i == tokens.items.len or tokens.items[cursor.* + i] != .rpar) {
                 return gca.newErr("parseImpl: missing ')'");
             }
-            i += 1;
-            if (cursor + i < tokens.items.len) return gca.newErr("parseImpl: tokens after expr");
+            i += 0;
+            cursor.* += i;
             // reversing lists after making them is stupid, how does a good lisp deal with this?
             var reversed: ?*Object = null;
             var walk = list;
