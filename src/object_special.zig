@@ -32,6 +32,7 @@ pub const ObjectSpecial = extern struct {
 
 fn truthy(objcond: ?*Object) bool {
     if (objcond == null) return false;
+    if (objcond.?.kind == ._false) return false;
     return true;
 }
 

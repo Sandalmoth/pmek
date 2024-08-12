@@ -10,6 +10,8 @@ const ObjectPrimitive = @import("object_primitive.zig").ObjectPrimitive;
 const ObjectErr = @import("object_err.zig").ObjectErr;
 const ObjectSymbol = @import("object_symbol.zig").ObjectSymbol;
 const ObjectSpecial = @import("object_special.zig").ObjectSpecial;
+const ObjectTrue = @import("object_bool.zig").ObjectTrue;
+const ObjectFalse = @import("object_bool.zig").ObjectFalse;
 
 pub const Kind = enum(u8) {
     real,
@@ -20,6 +22,8 @@ pub const Kind = enum(u8) {
     err,
     symbol,
     special,
+    _true,
+    _false,
 };
 
 pub fn ObjectType(comptime kind: Kind) type {
@@ -32,6 +36,8 @@ pub fn ObjectType(comptime kind: Kind) type {
         .err => ObjectErr,
         .symbol => ObjectSymbol,
         .special => ObjectSpecial,
+        ._true => ObjectTrue,
+        ._false => ObjectFalse,
     };
 }
 
@@ -63,6 +69,8 @@ pub const Object = extern struct {
             .err => obj.?.as(.err).hash(level),
             .symbol => obj.?.as(.symbol).hash(level),
             .special => obj.?.as(.special).hash(level),
+            ._true => obj.?.as(._true).hash(level),
+            ._false => obj.?.as(._false).hash(level),
         };
     }
 };
@@ -120,6 +128,8 @@ pub fn eql(obj1: ?*Object, obj2: ?*Object) bool {
             );
         },
         .special => obj1.?.as(.special).form == obj2.?.as(.special).form,
+        ._true => true,
+        ._false => true,
     };
 }
 
@@ -178,6 +188,8 @@ fn _printImpl(_obj: ?*Object, writer: anytype) anyerror!void {
                 ._if => try writer.print("<IF>", .{}),
             }
         },
+        ._true => try writer.print("<TRUE>", .{}),
+        ._false => try writer.print("<FALSE>", .{}),
     }
 }
 

@@ -28,6 +28,8 @@ pub const RT = struct {
         rt.env = rt.gca.newChamp();
 
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("if"), rt.gca.newSpecial(._if));
+        rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("true"), rt.gca.newTrue());
+        rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("false"), rt.gca.newFalse());
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("+"), rt.gca.newPrim(primitive.add));
 
         return rt;
@@ -47,7 +49,7 @@ pub const RT = struct {
         if (ast == null) return null;
 
         switch (ast.?.kind) {
-            .real, .string, .champ, .primitive, .err, .special => return ast,
+            .real, .string, .champ, .primitive, .err, .special, ._true, ._false => return ast,
             .symbol => {
                 const result = champ.get(rt.env, ast);
                 if (result == null) return rt.gca.newErr("eval: unbound symbol");
@@ -128,8 +130,11 @@ test "scratch" {
     const ifexpr = rt.gca.newCons(
         rt.gca.newSymbol("if"),
         rt.gca.newCons(
-            // rt.gca.newReal(123.0),
-            null,
+            // rt.gca.newTrue(),
+            // rt.gca.newFalse(),
+            rt.gca.newSymbol("true"),
+            // rt.gca.newSymbol("false"),
+            // null,
             rt.gca.newCons(
                 rt.gca.newReal(1.0),
                 rt.gca.newCons(

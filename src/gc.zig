@@ -282,6 +282,16 @@ pub const GCAllocator = struct {
         return @alignCast(@ptrCast(obj));
     }
 
+    pub fn newTrue(gca: *GCAllocator) *Object {
+        const obj = gca.new(._true, 0);
+        return @alignCast(@ptrCast(obj));
+    }
+
+    pub fn newFalse(gca: *GCAllocator) *Object {
+        const obj = gca.new(._false, 0);
+        return @alignCast(@ptrCast(obj));
+    }
+
     fn newFree(gca: *GCAllocator) void {
         gca.free.next = gca.used;
         gca.used = gca.free;
@@ -389,6 +399,8 @@ const GCCollector = struct {
             .err => obj.page().markObject(obj, .err, obj.as(.err).len),
             .symbol => obj.page().markObject(obj, .symbol, obj.as(.symbol).len),
             .special => obj.page().markObject(obj, .special, 0),
+            ._true => obj.page().markObject(obj, ._true, 0),
+            ._false => obj.page().markObject(obj, ._false, 0),
         }
     }
 };
