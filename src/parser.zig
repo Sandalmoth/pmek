@@ -28,13 +28,56 @@ pub fn parse(gc: *GC, src: []const u8) ?*Object {
     defer arena.deinit();
     const aa = arena.allocator();
     const tokens = lex(aa, src);
+
     for (tokens.items) |t| {
         std.debug.print("{} ", .{t});
     }
     std.debug.print("\n", .{});
 
-    return null;
+    if (tokens.items.len == 0) return gc.allocator.newErr("parse: found no tokens");
+    return parseImpl(&gc.allocator, tokens, 0);
 }
+
+fn parseImpl(gca: *GCAllocator, tokens: std.ArrayList(Token), cursor: usize) ?*Object {
+    switch (tokens.items[cursor]) {
+        .nil => return null,
+        .lpar => {
+            var i: usize = 1;
+            var list: ?*Object = null;
+            while (cursor + i < tokens.items.len and tokens.items[cursor + i] != .rpar) : (i += 1) {
+                list = gca.newCons(
+                    parseImpl(gca, tokens, cursor + i),
+                    list,
+                );
+            }
+            if (cursor + i == tokens.items.len or tokens.items[cursor + i] != .rpar) {
+                return gca.newErr("parseImpl: missing ')'");
+            }
+            i += 1;
+            if (cursor + i < tokens.items.len) return gca.newErr("parseImpl: tokens after expr");
+            // reversing lists after making them is stupid, how does a good lisp deal with this?
+            var reversed: ?*Object = null;
+            var walk = list;
+            while (walk != null) {
+                const cons = walk.?.as(.cons);
+                reversed = gca.newCons(cons.car, reversed);
+                walk = cons.cdr;
+            }
+            return reversed;
+        },
+        .rpar => return gca.newErr("parseImpl: unexpected ')'"),
+        .number => |s| {
+            const x = std.fmt.parseFloat(f64, s) catch
+                return gca.newErr("parseImpl: failed to parse float");
+            return gca.newReal(x);
+        },
+        .string => |s| return gca.newString(s),
+        .symbol => |s| return gca.newSymbol(s),
+        .invalid => return gca.newErr("parseImpl: invalid character"),
+    }
+}
+
+// pub fn parseSexpr()
 
 fn isSymbolChar(c: u8) bool {
     return switch (c) {
