@@ -5,6 +5,7 @@ const Object = @import("object.zig").Object;
 const GC = @import("gc.zig").GC;
 const GCAllocator = @import("gc.zig").GCAllocator;
 const debugPrint = @import("object.zig").debugPrint;
+const parse = @import("parser.zig").parse;
 
 const champ = @import("object_champ.zig");
 const primitive = @import("object_primitive.zig");
@@ -41,8 +42,7 @@ pub const RT = struct {
     }
 
     pub fn read(rt: *RT, src: []const u8) ?*Object {
-        _ = rt;
-        _ = src;
+        return parse(rt.gc, src);
     }
 
     pub fn eval(rt: *RT, ast: ?*Object) ?*Object {
@@ -146,4 +146,14 @@ test "scratch" {
     );
     debugPrint(ifexpr);
     debugPrint(rt.eval(ifexpr));
+
+    const src = "(+ 1 2)";
+    const rexpr = rt.read(src);
+    debugPrint(rexpr);
+    debugPrint(rt.eval(rexpr));
+
+    _ = rt.read("hello");
+    _ = rt.read("hello   ");
+    _ = rt.read("\"hello\"");
+    _ = rt.read("\"hello\"   ");
 }
