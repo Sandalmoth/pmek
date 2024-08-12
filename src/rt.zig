@@ -9,7 +9,7 @@ const debugPrint = @import("object.zig").debugPrint;
 const champ = @import("object_champ.zig");
 const primitive = @import("object_primitive.zig");
 
-const RT = struct {
+pub const RT = struct {
     alloc: std.mem.Allocator,
     gc: *GC,
     gca: *GCAllocator,
@@ -27,6 +27,7 @@ const RT = struct {
         rt.gca = &rt.gc.allocator;
         rt.env = rt.gca.newChamp();
 
+        rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("if"), rt.gca.newSpecial(._if));
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("+"), rt.gca.newPrim(primitive.add));
 
         return rt;
@@ -46,7 +47,7 @@ const RT = struct {
         if (ast == null) return null;
 
         switch (ast.?.kind) {
-            .real, .string, .champ, .primitive, .err => return ast,
+            .real, .string, .champ, .primitive, .err, .special => return ast,
             .symbol => {
                 const result = champ.get(rt.env, ast);
                 if (result == null) return rt.gca.newErr("eval: unbound symbol");
@@ -60,11 +61,16 @@ const RT = struct {
         if (cons.car.?.kind != .symbol) return rt.gca.newErr("eval: cannot call non-symbol");
         const f = champ.get(rt.env, cons.car);
         debugPrint(f);
-        const args = rt.evlis(cons.cdr);
-        debugPrint(args);
         if (f == null) return rt.gca.newErr("eval: cannot call nil");
         switch (f.?.kind) {
-            .primitive => return f.?.as(.primitive).call(rt.gca, args),
+            .primitive => {
+                const args = rt.evlis(cons.cdr);
+                debugPrint(args);
+                return f.?.as(.primitive).call(rt.gca, args);
+            },
+            .special => {
+                return f.?.as(.special).call(rt, cons.cdr);
+            },
             else => return rt.gca.newErr("eval: can only call primitive"),
         }
 
@@ -118,4 +124,21 @@ test "scratch" {
     );
     debugPrint(expr);
     debugPrint(rt.eval(expr));
+
+    const ifexpr = rt.gca.newCons(
+        rt.gca.newSymbol("if"),
+        rt.gca.newCons(
+            // rt.gca.newReal(123.0),
+            null,
+            rt.gca.newCons(
+                rt.gca.newReal(1.0),
+                rt.gca.newCons(
+                    rt.gca.newReal(2.0),
+                    null,
+                ),
+            ),
+        ),
+    );
+    debugPrint(ifexpr);
+    debugPrint(rt.eval(ifexpr));
 }

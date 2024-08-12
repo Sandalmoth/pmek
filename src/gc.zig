@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const Kind = @import("object.zig").Kind;
+const Form = @import("object_special.zig").Form;
 pub const Object = @import("object.zig").Object;
 const ObjectType = @import("object.zig").ObjectType;
 
@@ -275,6 +276,12 @@ pub const GCAllocator = struct {
         return @alignCast(@ptrCast(obj));
     }
 
+    pub fn newSpecial(gca: *GCAllocator, form: Form) *Object {
+        const obj = gca.new(.special, 0);
+        obj.form = form;
+        return @alignCast(@ptrCast(obj));
+    }
+
     fn newFree(gca: *GCAllocator) void {
         gca.free.next = gca.used;
         gca.used = gca.free;
@@ -381,6 +388,7 @@ const GCCollector = struct {
             .primitive => obj.page().markObject(obj, .primitive, 0),
             .err => obj.page().markObject(obj, .err, obj.as(.err).len),
             .symbol => obj.page().markObject(obj, .symbol, obj.as(.symbol).len),
+            .special => obj.page().markObject(obj, .special, 0),
         }
     }
 };

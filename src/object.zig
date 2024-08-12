@@ -9,6 +9,7 @@ const ObjectChamp = @import("object_champ.zig").ObjectChamp;
 const ObjectPrimitive = @import("object_primitive.zig").ObjectPrimitive;
 const ObjectErr = @import("object_err.zig").ObjectErr;
 const ObjectSymbol = @import("object_symbol.zig").ObjectSymbol;
+const ObjectSpecial = @import("object_special.zig").ObjectSpecial;
 
 pub const Kind = enum(u8) {
     real,
@@ -18,6 +19,7 @@ pub const Kind = enum(u8) {
     primitive,
     err,
     symbol,
+    special,
 };
 
 pub fn ObjectType(comptime kind: Kind) type {
@@ -29,6 +31,7 @@ pub fn ObjectType(comptime kind: Kind) type {
         .primitive => ObjectPrimitive,
         .err => ObjectErr,
         .symbol => ObjectSymbol,
+        .special => ObjectSpecial,
     };
 }
 
@@ -59,6 +62,7 @@ pub const Object = extern struct {
             .primitive => obj.?.as(.primitive).hash(level),
             .err => obj.?.as(.err).hash(level),
             .symbol => obj.?.as(.symbol).hash(level),
+            .special => obj.?.as(.special).hash(level),
         };
     }
 };
@@ -115,6 +119,7 @@ pub fn eql(obj1: ?*Object, obj2: ?*Object) bool {
                 sym2.data()[0..sym2.len],
             );
         },
+        .special => obj1.?.as(.special).form == obj2.?.as(.special).form,
     };
 }
 
@@ -166,6 +171,12 @@ fn _printImpl(_obj: ?*Object, writer: anytype) anyerror!void {
         .symbol => {
             const sym = obj.as(.symbol);
             try writer.print("{s}", .{sym.data()[0..sym.len]});
+        },
+        .special => {
+            const special = obj.as(.special);
+            switch (special.form) {
+                ._if => try writer.print("<IF>", .{}),
+            }
         },
     }
 }
