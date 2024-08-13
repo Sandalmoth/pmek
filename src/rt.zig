@@ -34,6 +34,10 @@ pub const RT = struct {
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("true"), rt.gca.newTrue());
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("false"), rt.gca.newFalse());
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("+"), rt.gca.newPrim(primitive.add));
+        rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("-"), rt.gca.newPrim(primitive.sub));
+        rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("*"), rt.gca.newPrim(primitive.mul));
+        rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("/"), rt.gca.newPrim(primitive.div));
+        rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("="), rt.gca.newPrim(primitive._eql));
 
         return rt;
     }

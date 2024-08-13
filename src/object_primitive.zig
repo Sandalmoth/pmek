@@ -45,6 +45,87 @@ pub fn add(gca: *GCAllocator, objargs: ?*Object) ?*Object {
     return gca.newReal(acc);
 }
 
+pub fn sub(gca: *GCAllocator, objargs: ?*Object) ?*Object {
+    var acc: f64 = 0;
+    var args = objargs;
+    var first = true;
+    while (args) |arg| {
+        if (arg.kind != .cons) return gca.newErr("sub: malformed argument list");
+        const cons = arg.as(.cons);
+        if (cons.car == null) return gca.newErr("sub: cannot sub null");
+        if (cons.car.?.kind != .real) {
+            return gca.newErr("sub: arguments must be numbers");
+        }
+        if (first) {
+            acc = cons.car.?.as(.real).val;
+            first = false;
+        } else {
+            acc -= cons.car.?.as(.real).val;
+        }
+        args = cons.cdr;
+    }
+    if (first) return gca.newErr("sub: not enough arguments");
+    return gca.newReal(acc);
+}
+
+pub fn mul(gca: *GCAllocator, objargs: ?*Object) ?*Object {
+    var acc: f64 = 1;
+    var args = objargs;
+    while (args) |arg| {
+        if (arg.kind != .cons) return gca.newErr("mul: malformed argument list");
+        const cons = arg.as(.cons);
+        if (cons.car == null) return gca.newErr("mul: cannot mul null");
+        if (cons.car.?.kind != .real) {
+            return gca.newErr("mul: arguments must be numbers");
+        }
+        acc *= cons.car.?.as(.real).val;
+        args = cons.cdr;
+    }
+    return gca.newReal(acc);
+}
+
+pub fn div(gca: *GCAllocator, objargs: ?*Object) ?*Object {
+    var acc: f64 = 1;
+    var args = objargs;
+    var first = true;
+    while (args) |arg| {
+        if (arg.kind != .cons) return gca.newErr("div: malformed argument list");
+        const cons = arg.as(.cons);
+        if (cons.car == null) return gca.newErr("div: cannot div null");
+        if (cons.car.?.kind != .real) {
+            return gca.newErr("div: arguments must be numbers");
+        }
+        if (first) {
+            acc = cons.car.?.as(.real).val;
+            first = false;
+        } else {
+            acc /= cons.car.?.as(.real).val;
+        }
+        args = cons.cdr;
+    }
+    if (first) return gca.newErr("div: not enough arguments");
+    return gca.newReal(acc);
+}
+
+pub fn _eql(gca: *GCAllocator, objargs: ?*Object) ?*Object {
+    var acc: ?*Object = null;
+    var args = objargs;
+    var first = true;
+    while (args) |arg| {
+        if (arg.kind != .cons) return gca.newErr("eql: malformed argument list");
+        const cons = arg.as(.cons);
+        if (first) {
+            acc = cons.car;
+            first = false;
+        } else {
+            if (!eql(acc, cons.car)) return gca.newFalse();
+        }
+        args = cons.cdr;
+    }
+    if (first) return gca.newErr("eql: not enough arguments");
+    return gca.newTrue();
+}
+
 test "simple calls" {
     const gc = GC.create(std.testing.allocator);
     defer gc.destroy();
