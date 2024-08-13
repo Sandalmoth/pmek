@@ -30,6 +30,7 @@ pub const RT = struct {
         rt.env = rt.gca.newChamp();
 
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("if"), rt.gca.newSpecial(._if));
+        rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("def"), rt.gca.newSpecial(.def));
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("true"), rt.gca.newTrue());
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("false"), rt.gca.newFalse());
         rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol("+"), rt.gca.newPrim(primitive.add));
@@ -170,4 +171,9 @@ test "scratch" {
     try rt.rep("(+ 1 2)", stdout);
     try rt.rep("(if true (+ 1 2) (+ 3 4))", stdout);
     try rt.rep("(if false (+ 1 2) (+ 3 4))", stdout);
+    try rt.rep("(+ 1.5 2.5)", stdout);
+    try rt.rep("(+ 1.5 \"hello\")", stdout);
+    try rt.rep("a", stdout);
+    try rt.rep("(def a (+ 2 3))", stdout);
+    try rt.rep("a", stdout);
 }

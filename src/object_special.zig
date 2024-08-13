@@ -4,8 +4,11 @@ const Kind = @import("object.zig").Kind;
 const Object = @import("object.zig").Object;
 const RT = @import("rt.zig").RT;
 
+const champ = @import("object_champ.zig");
+
 pub const Form = enum(u8) {
     _if,
+    def,
 };
 
 pub const ObjectSpecial = extern struct {
@@ -26,6 +29,7 @@ pub const ObjectSpecial = extern struct {
     pub fn call(objspecial: *ObjectSpecial, rt: *RT, objargs: ?*Object) ?*Object {
         return switch (objspecial.form) {
             ._if => _if(rt, objargs),
+            .def => def(rt, objargs),
         };
     }
 };
@@ -53,4 +57,19 @@ fn _if(rt: *RT, objargs: ?*Object) ?*Object {
         if (actions1.cdr != null) return rt.gca.newErr("_if: too many arguments");
         return rt.eval(actions1.car);
     }
+}
+
+fn def(rt: *RT, objargs: ?*Object) ?*Object {
+    if (objargs == null) return rt.gca.newErr("def: not enough arguments 0");
+    if (objargs.?.kind != .cons) return rt.gca.newErr("def: malformed argument list 0");
+    const cons = objargs.?.as(.cons);
+    if (cons.cdr == null) return rt.gca.newErr("def: not enough arguments 1");
+    if (cons.cdr.?.kind != .cons) return rt.gca.newErr("def: malformed argument list 1");
+    const cons2 = cons.cdr.?.as(.cons);
+    if (cons2.cdr != null) return rt.gca.newErr("def: too many arguments");
+    if (cons.car == null or cons.car.?.kind != .symbol)
+        return rt.gca.newErr("def: first argument must be a symbol");
+    const value = rt.eval(cons2.car);
+    rt.env = champ.assoc(rt.gca, rt.env, cons.car, value);
+    return value;
 }

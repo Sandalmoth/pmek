@@ -186,6 +186,7 @@ fn _printImpl(_obj: ?*Object, writer: anytype) anyerror!void {
             const special = obj.as(.special);
             switch (special.form) {
                 ._if => try writer.print("<IF>", .{}),
+                .def => try writer.print("<DEF>", .{}),
             }
         },
         ._true => try writer.print("<TRUE>", .{}),
