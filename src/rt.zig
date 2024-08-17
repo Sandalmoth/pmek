@@ -47,6 +47,14 @@ pub const RT = struct {
         rt.alloc.destroy(rt);
     }
 
+    pub fn addPrimitive(
+        rt: *RT,
+        name: []const u8,
+        ptr: *const fn (*GCAllocator, ?*Object) ?*Object,
+    ) void {
+        rt.env = champ.assoc(rt.gca, rt.env, rt.gca.newSymbol(name), rt.gca.newPrim(ptr));
+    }
+
     pub fn read(rt: *RT, src: []const u8) ?*Object {
         const result = parse(rt.gc, src);
         debugPrint(result);

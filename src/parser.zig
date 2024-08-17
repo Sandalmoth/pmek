@@ -101,7 +101,7 @@ fn lex(aa: std.mem.Allocator, src: []const u8) std.ArrayList(Token) {
     var i: usize = 0;
     while (i < src.len) : (i += 1) {
         switch (src[i]) {
-            ' ' => {},
+            ' ', '\t', '\n' => {},
             '(' => tokens.appendAssumeCapacity(.{ .lpar = {} }),
             ')' => tokens.appendAssumeCapacity(.{ .rpar = {} }),
             '0'...'9' => {
